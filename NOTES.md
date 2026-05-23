@@ -10,6 +10,22 @@ This repo restores those lost JSONLs from a macOS Time Machine backup, by readin
 
 Scope: **macOS + APFS Time Machine only.** Not cross-platform. Not for any other backup system.
 
+## Prevention vs. cure
+
+This repo is the **cure** — recovering chats after they're already gone. The **prevention** is a one-line change to `~/.claude/settings.json`:
+
+```json
+"cleanupPeriodDays": 36500
+```
+
+(~100 years; no documented upper bound, schema only requires positive integer.) Set this immediately if you haven't. But there's at least one GitHub report of the setting being ignored after an app update, which is why having Time Machine backups is still essential.
+
+## Prerequisites
+
+- macOS with an APFS Time Machine drive that's been used at least once.
+- **Full Disk Access** granted to whatever app will run the script: Terminal.app, iTerm, or VS Code (whichever spawns the shell). Without FDA, `mount_apfs` and reads under `/Volumes/.timemachine/` fail with `Operation not permitted` or misleading `could not resolve path` errors. Grant via System Settings → Privacy & Security → Full Disk Access → +.
+- The TM drive must be physically plugged in and mounted before running.
+
 ## The bug, in one paragraph
 
 `~/.claude/settings.json` accepts a key `cleanupPeriodDays` (positive integer, default 30). Claude Code's cleanup function reads it on startup and deletes any JSONL older than that many days. The default is too aggressive, the setting isn't exposed in the UI, and there's at least one open GitHub issue claiming the setting can be ignored after some app updates. First defense is to set the value high (`36500` ~= 100 years) in `~/.claude/settings.json`. Second defense is to have Time Machine snapshots so you can recover if it happens anyway. This repo is the recovery half.
