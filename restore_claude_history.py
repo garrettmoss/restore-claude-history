@@ -16,6 +16,7 @@ or IDE running this. See NOTES.md for background.
 from __future__ import annotations
 
 import argparse
+import getpass
 import os
 import re
 import shutil
@@ -367,7 +368,9 @@ def main() -> int:
         die("macOS only.")
 
     args = parse_args()
-    user = os.getlogin()
+    # getpass.getuser() reads LOGNAME/USER env vars; more reliable than
+    # os.getlogin() in non-TTY contexts (where it can return "root").
+    user = getpass.getuser()
     claude_dir = Path.home() / ".claude" / "projects"
 
     device = find_tm_device()
