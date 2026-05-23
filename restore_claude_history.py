@@ -99,9 +99,14 @@ def find_tm_device() -> str:
 
 
 def list_snapshots(device: str) -> list[str]:
-    """List snapshot names on /dev/<device>."""
+    """List snapshot names on /dev/<device>.
+
+    `diskutil apfs listSnapshots` outputs a tree with leading pipe chars:
+        |   Name:   com.apple.TimeMachine.<ts>.backup
+    so we match Name: anywhere on the line, not just after whitespace.
+    """
     out = run(["diskutil", "apfs", "listSnapshots", f"/dev/{device}"], check=False).stdout
-    return [m.group(1).strip() for m in re.finditer(r"^\s*Name:\s*(.+)$", out, re.MULTILINE)]
+    return [m.group(1).strip() for m in re.finditer(r"Name:\s*(\S+)", out)]
 
 
 # -------- mount management --------
