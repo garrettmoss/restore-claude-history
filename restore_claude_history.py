@@ -66,14 +66,34 @@ def die(msg: str) -> "NoReturn":  # type: ignore[name-defined]
 
 
 def find_tm_device() -> str:
-    """Return e.g. 'disk5s2' — the APFS volume tagged as a Time Machine target."""
+    """
+    Return e.g. 'disk5s2' — the APFS volume that is the user's TM destination.
+
+    `tmutil destinationinfo` is authoritative; it lists the actual TM
+    destinations and their mount points. We resolve the mount point back to
+    a BSD device via `diskutil info`. Falls back to scanning APFS volumes
+    whose *volume name* contains "Time Machine" if tmutil has nothing.
+
+    Why we don't just grep `diskutil info <dev>` for "Time Machine": that
+    field also lists snapshot names, and every Mac with local TM snapshots
+    on the internal disk will match — so we'd accidentally pick the
+    internal data volume.
+    """
+    info = run(["tmutil", "destinationinfo"], check=False).stdout
+    for mp in re.findall(r"^Mount Point\s*:\s*(.+)$", info, re.MULTILINE):
+        dev_info = run(["diskutil", "info", mp.strip()], check=False).stdout
+        m = re.search(r"Device Node:\s*/dev/(disk\d+s\d+)", dev_info)
+        if m:
+            return m.group(1)
+
+    # Fallback: scan APFS volumes by *volume name* (not the full info blob).
     listing = run(["diskutil", "list"]).stdout
-    # Lines look like:  "   1:    APFS Volume Sapphire Time Machine   148.1 GB   disk5s2"
-    candidates = re.findall(r"APFS Volume[^\n]*?(disk\d+s\d+)", listing)
-    for dev in candidates:
-        info = run(["diskutil", "info", f"/dev/{dev}"], check=False).stdout
-        if re.search(r"time\s*machine", info, re.IGNORECASE):
-            return dev
+    # Lines: "   1:    APFS Volume Sapphire Time Machine   148.1 GB   disk5s2"
+    for line in listing.splitlines():
+        m = re.match(r"\s*\d+:\s+APFS Volume\s+(.+?)\s+[\d.]+\s+\w+\s+(disk\d+s\d+)", line)
+        if m and re.search(r"time\s*machine", m.group(1), re.IGNORECASE):
+            return m.group(2)
+
     die("No Time Machine APFS volume detected. Plug in your TM drive and try again.")
 
 
