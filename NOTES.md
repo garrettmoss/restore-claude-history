@@ -102,3 +102,93 @@ Original recovery session happened from inside `~/projects/young-ladys-primer` o
 ## Related GitHub issues to track / comment on
 
 (To fill in once we link this repo from those threads. Search `anthropics/claude-code` for "history" "deleted" "cleanupPeriodDays" "lost chats".)
+
+## Reference: working commands from the live recovery
+
+These are the literal commands that worked in the original recovery, captured as evidence-of-incantation, not as a polished script. Paths and snapshot names are specific to that session — adapt for yours. The script we build will generalize all of this.
+
+### Identify the TM disk device
+
+```
+diskutil list | grep -A 2 "Time Machine"
+# → e.g. APFS Volume "Sapphire Time Machine" disk5s2
+```
+
+### List APFS snapshots on the TM volume
+
+```
+diskutil apfs listSnapshots /dev/disk5s2
+# → prints names like com.apple.TimeMachine.2026-04-24-205237.backup
+```
+
+### Mount each snapshot to a temp dir
+
+```
+mkdir -p /tmp/tm-apr24
+mount_apfs -s com.apple.TimeMachine.2026-04-24-205237.backup /dev/disk5s2 /tmp/tm-apr24
+# Mounts read-only. Repeat per snapshot with unique tmp dirs.
+```
+
+### Find the project JSONLs inside a mounted snapshot
+
+```
+SNAP=/tmp/tm-apr24/2026-04-24-205237.backup
+ls "$SNAP/Data/Users/<user>/.claude/projects/<encoded-project>/"*.jsonl
+```
+
+Note the `Data/` firmlink — required.
+
+### Restore loop (largest version wins)
+
+```
+DEST=/Users/<user>/.claude/projects/<encoded-project>
+SUB=Data/Users/<user>/.claude/projects/<encoded-project>
+
+for snap in /tmp/tm-mar11/... /tmp/tm-mar20/... /tmp/tm-apr17/... /tmp/tm-apr24/...; do
+  for src in "$snap/$SUB"/*.jsonl; do
+    name=$(basename "$src")
+    dst="$DEST/$name"
+    src_size=$(stat -f%z "$src")
+    if [ ! -e "$dst" ]; then
+      cp -p "$src" "$dst"
+    else
+      dst_size=$(stat -f%z "$dst")
+      if [ "$src_size" -gt "$dst_size" ]; then
+        chmod -N "$dst" 2>/dev/null    # strip inherited ACL so overwrite works
+        chmod u+w "$dst"
+        cp "$src" "$dst"
+        touch -r "$src" "$dst"          # re-stamp mtime since -p was dropped
+        chmod -N "$dst" 2>/dev/null
+      fi
+    fi
+  done
+done
+```
+
+### Restore subagent subdirectories
+
+```
+for snap in /tmp/tm-*/; do
+  snapdir=$(ls -d "$snap"*.backup/$SUB 2>/dev/null)
+  [ -z "$snapdir" ] && continue
+  for d in "$snapdir"/*/; do
+    uuid=$(basename "$d")
+    if [ ! -d "$DEST/$uuid" ]; then
+      cp -R "$d" "$DEST/$uuid"
+      find "$DEST/$uuid" -exec chmod -N {} \; 2>/dev/null
+      find "$DEST/$uuid" -exec chmod u+w {} \; 2>/dev/null
+    fi
+  done
+done
+```
+
+### Cleanup
+
+```
+for snap in /tmp/tm-*/; do
+  diskutil unmount "$snap"
+done
+rmdir /tmp/tm-*
+```
+
+A real script must put the cleanup in a `trap '...' EXIT INT TERM` so it runs even on error or Ctrl-C.
