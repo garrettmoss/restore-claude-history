@@ -26,6 +26,24 @@ So there are two layers.
 
 **Restoration** is [`restore_claude_history.py`](restore_claude_history.py). It assumes the worst has already happened and pulls your chats back out of Time Machine. It's what catches you when prevention fails — which, given the track record, is a "when" not an "if."
 
+## Why updates seem to trigger this
+
+The precipitating event, in my experience, has not been "I left chats sitting around for 30+ days and `cleanupPeriodDays` finally got them." It's been: **I closed VS Code, reopened it, and the chats were gone.**
+
+This has happened multiple times on this machine, even with `cleanupPeriodDays` set to a high value. The common factor across every occurrence is that *something updated* between close and reopen — but I can't always tell *what*. Candidates I've ruled in and not yet ruled out:
+
+- **The Claude Code CLI updating** (it self-updates frequently and quietly).
+- **The Claude Code VS Code extension updating** (extensions auto-update by default).
+- **The extension or its host process restarting** — even without a version change, a restart appears to be enough to trip something.
+- **VS Code itself updating.**
+- **Claude Desktop updating** (when it's running in parallel; it shares some local state).
+
+I haven't isolated which of these is sufficient on its own — I'd need to disable auto-updates on each surface and reproduce, which is more work than I've done. But several of the GitHub issues describe the same shape: close → update → reopen → chats are gone. See [#41458](https://github.com/anthropics/claude-code/issues/41458), [#38055](https://github.com/anthropics/claude-code/issues/38055), [#12908](https://github.com/anthropics/claude-code/issues/12908), [#38691](https://github.com/anthropics/claude-code/issues/38691), [#48334](https://github.com/anthropics/claude-code/issues/48334).
+
+The practical takeaway: **don't treat `cleanupPeriodDays` as the only line of defense.** If you've been using Claude Code for more than a few weeks and care about the transcripts, assume an update can wipe them at any time, and have Time Machine running. This tool is the catch when that happens.
+
+If you've reproduced this with a known-isolated trigger (just the CLI updating, just the extension, etc.), I'd genuinely like to know — open an issue on the repo or comment on the relevant `anthropics/claude-code` thread.
+
 ## What we verified by hand, before scripting
 
 Before writing any code, we worked through a real recovery in a Claude Code session. The script automates exactly this sequence:
