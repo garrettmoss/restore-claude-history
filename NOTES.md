@@ -97,6 +97,8 @@ These are the things the script is silently working around. Document them here s
 
 Open threads in `anthropics/claude-code` where users are hitting the disappearing-chats problem. Captured 2026-05-24 — comment counts will drift.
 
+**My own filed issue:** [#62272 — Chat JSONLs deleted from `~/.claude/projects/` despite `cleanupPeriodDays` set high — appears triggered by updates/restarts](https://github.com/anthropics/claude-code/issues/62272). Filed 2026-05-25.
+
 ### Start here (highest-signal, lowest spam risk)
 
 In order — comment on one, wait a few days, then the next. Tailor each comment; don't paste verbatim.
