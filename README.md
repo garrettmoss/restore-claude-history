@@ -18,6 +18,8 @@ Before anything else, add this to `~/.claude/settings.json`:
 
 That's ~100 years. There's no documented upper bound; the schema just wants a positive integer. Do this on every machine you use Claude Code on.
 
+**Set this *and* keep backups — not one or the other.** The setting defangs the documented cleanup, but multiple user reports (e.g. [#41458](https://github.com/anthropics/claude-code/issues/41458)) describe chats vanishing *despite* the flag being set, most often around app updates. That's why this script exists alongside the prevention step, not instead of it.
+
 ## Recovery
 
 This script: [`restore_claude_history.py`](restore_claude_history.py)

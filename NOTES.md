@@ -4,7 +4,17 @@ Design rationale and lessons learned from building `restore_claude_history.py`. 
 
 ## Prevention vs. restoration
 
-Chats disappear for more than one reason. The documented one is `cleanupPeriodDays` in `~/.claude/settings.json` — a positive integer (default 30) that Claude Code reads on startup, then deletes any JSONL older than that. The default is too aggressive, the setting isn't exposed in the UI, and there's no warning before deletion. Beyond that, there are user reports of the setting being ignored after app updates, and more generally: Anthropic ships updates that touch your local files, and any future update could introduce new ways for chats to go missing.
+Chats disappear for more than one reason. The documented one is `cleanupPeriodDays` in `~/.claude/settings.json` — a positive integer (default 30) that Claude Code reads on startup, then deletes any JSONL older than that. The default is too aggressive, the setting isn't exposed in the UI, and there's no warning before deletion.
+
+Beyond the documented cleanup, **app updates appear to be the most-reported trigger for chat loss**, including in cases where the user had explicitly set `cleanupPeriodDays` to a high value. Pattern across the issue tracker:
+
+- [#41458](https://github.com/anthropics/claude-code/issues/41458) — `cleanupPeriodDays: 99999` set, 490 sessions deleted anyway.
+- [#38055](https://github.com/anthropics/claude-code/issues/38055) — "Minor version update permanently deletes chat history and scheduled tasks."
+- [#12908](https://github.com/anthropics/claude-code/issues/12908) — "Conversation History disappeared after update."
+- [#38691](https://github.com/anthropics/claude-code/issues/38691) — "All sessions lost after Claude Desktop update on Windows (data intact on disk)."
+- [#48334](https://github.com/anthropics/claude-code/issues/48334) — "Desktop app update deletes session history."
+
+These are user reports, not Anthropic-confirmed root causes — but the pattern is consistent enough that any prevention story needs to assume updates can ignore the setting. Anecdotally on this machine: closing and reopening VS Code (which can pull in an update silently) has been the precipitating event multiple times.
 
 So there are two layers.
 
@@ -12,7 +22,7 @@ So there are two layers.
 ```json
 "cleanupPeriodDays": 36500
 ```
-~100 years; no documented upper bound. Set this on every machine. It defangs the documented cleanup, but it doesn't protect you from app updates that ignore the setting, future changes in cleanup behavior, or anything else Anthropic decides to do to your local files down the road.
+~100 years; no documented upper bound. Set this on every machine. It defangs the documented cleanup, but per the issues above, it doesn't protect you from app updates that ignore the setting, future changes in cleanup behavior, or anything else Anthropic decides to do to your local files down the road.
 
 **Restoration** is [`restore_claude_history.py`](restore_claude_history.py). It assumes the worst has already happened and pulls your chats back out of Time Machine. It's what catches you when prevention fails — which, given the track record, is a "when" not an "if."
 
