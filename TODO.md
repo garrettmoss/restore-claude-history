@@ -34,15 +34,22 @@ Tip: track which channels actually drove traffic (GitHub repo Insights → Traff
 
 The Claude Desktop app has an embedded Claude Code area that lists past sessions in its UI, but clicking them often shows **"Session not found on disk"** — same disappearing-chat problem as Claude Code CLI, different storage location.
 
-Likely path (needs verification):
-`~/Library/Application Support/Claude/claude-code-sessions/`
+Confirmed path: `~/Library/Application Support/Claude/claude-code-sessions/<group>/<project>/local_*.json` (verified 2026-05-27 — one group dir present on this machine with 11 `local_*.json` metadata entries).
 
 Other adjacent dirs that may matter:
 - `~/Library/Application Support/Claude/claude-code/`
 - `~/Library/Application Support/Claude/claude-code-vm/`
 - `~/Library/Application Support/Claude/local-agent-mode-sessions/`
 
-Suggested approach for whoever picks this up:
+### Subtask: metadata synthesis after a Time Machine restore
+
+Raised by @BasedGPT on [#62272](https://github.com/anthropics/claude-code/issues/62272#issuecomment-4554894518) (and corroborated by @ShreeshaJay on [#48334](https://github.com/anthropics/claude-code/issues/48334)): JSONLs restored into `~/.claude/projects/` *without* a matching `local_*.json` entry in `claude-code-sessions/` get treated as orphans on the next cleanup pass and re-deleted. Originally observed on Windows; the path exists on macOS too, so the same risk almost certainly applies here.
+
+This means the current `restore_claude_history.py` flow has a gap: a successful restore can be silently undone on the next sweep if metadata isn't synthesised alongside the JSONLs. Fixing this is the natural bridge into the broader Desktop recovery work below — same files, same machine, same investigation.
+
+Reference implementation: [`BasedGPT/claude-code-session-recovery` → `tools/sessions/synth_session_metadata.py`](https://github.com/BasedGPT/claude-code-session-recovery/blob/main/tools/sessions/synth_session_metadata.py). Windows-targeted; logic ports. He gave permission to use it as the reference (and we gave him reciprocal permission on our largest-file + mtime-preservation code). Credit + link when this lands. I publicly committed to this being "next" in the [#62272 reply](https://github.com/anthropics/claude-code/issues/62272), so don't let it drift.
+
+### Broader Desktop recovery — suggested approach for whoever picks this up
 1. **Investigate first, code second.** Look at what's actually in those dirs, what file format the sessions use, and whether the UI is reading from the same place we'd be writing to. Don't assume it works like Claude Code's `~/.claude/projects/`.
 2. **Compare against a Time Machine snapshot.** Mount a snapshot, compare the same dirs inside it to what's on disk now. The diff *is* the deleted content.
 3. **Decide: extend `restore_claude_history.py` or write a sibling?** Depends on how similar the file layout and recovery logic are. If JSONLs in a parallel dir, probably one script with a `--desktop` flag. If wildly different format (SQLite, IndexedDB, encrypted blobs, etc.), a sibling script is cleaner.
