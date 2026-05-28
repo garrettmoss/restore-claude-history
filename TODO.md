@@ -30,6 +30,16 @@ Suggested order (lowest cost / highest signal first):
 
 Tip: track which channels actually drove traffic (GitHub repo Insights → Traffic) so future-you knows what worked.
 
+## Sequential mount/index/unmount refactor (v1.1)
+
+Current design: mounts every `.backup` snapshot on the TM destination drive up-front (lines 416–426 in `restore_claude_history.py`), then indexes and restores. Fine on a test setup with 4 snapshots. Likely uncomfortable on realistic power-user setups — Apple's documented APFS TM retention is hourly-for-24h + daily-for-a-month + weekly-after, so a 6-month-old TM drive accumulates ~75 snapshots, a 2-year-old one ~135. At that scale we'd be asking macOS to hold 75–150 simultaneous read-only mounts and Spotlight to index all of them concurrently. Confirmed observation (2026-05-28) at 4 snapshots: 4 parallel CGPDFService/mds_stores processes ate CPU until the drive was ejected. Linear scaling with snapshot count is plausible and probably bad UX.
+
+Refactor: mount snap → walk `Data/Users/<user>/.claude/projects/**/*.jsonl` → update a running "largest-version" dict → unmount → next snapshot. End result identical; bounded concurrency (always exactly 1 owned mount in flight + the macOS auto-mount we don't touch). Code is structurally close to today's — `Snapshot` objects become more ephemeral, `pick_largest` becomes incremental instead of one-shot. ~30-line refactor.
+
+Skipping pre-ship load testing per garrett (2026-05-28): real-world failure modes will surface faster via GitHub issues from actual power users than via synthetic testing. Low-stakes, single-script tool — fine bet.
+
+When shipping: bump `__version__` in `restore_claude_history.py` to `"1.1.0"` and tag `v1.1.0` on the resulting commit. `push.followTags = true` is set so the new tag travels with the next `git push`. Per CLAUDE.md, the in-script `__version__` and the latest git tag must always match. Update README to mention the change if anyone has been bitten by the parallel-mount design.
+
 ## Claude Desktop session recovery
 
 The Claude Desktop app has an embedded Claude Code area that lists past sessions in its UI, but clicking them often shows **"Session not found on disk"** — same disappearing-chat problem as Claude Code CLI, different storage location.
