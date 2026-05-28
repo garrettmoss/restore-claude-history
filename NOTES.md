@@ -107,6 +107,8 @@ These are the things the script is silently working around. Document them here s
 
 - **macOS ships bash 3.2** (frozen for licensing reasons since 2006). No associative arrays. We tried writing this in bash first; the resulting code was readable only via `sort | awk` pipeline tricks and a `trap` cleanup that turned out to be buggy. Python made all of this go away.
 
+- **Claude Code re-appends identical `ai-title` events to JSONLs on every session resume, bumping mtime each time.** Observed in `young-ladys-primer` 2026-05-28: three JSONLs had identical second-precision mtimes (`May 21 20:53:03`) that didn't match their in-file message timestamps (May 10–19). The files each had 41–67 `ai-title` events appended over time, mostly identical to one prior — i.e. Claude is regenerating the same title and rewriting the line on every resume (or similar trigger). Two consequences for anyone reading restored files: (a) mtime is a poor proxy for "when the user last touched this chat" — use the last in-file `timestamp` field for chronological display; (b) this is concrete evidence for [@ojura's argument on #59248](https://github.com/anthropics/claude-code/issues/59248#issuecomment-4535863101) that retention should key off in-file timestamps, not stat.mtime — Claude's own code is mutating mtime in ways unrelated to user activity. Not something the restore script can fix; documented here so future readers don't blame the restore for "wrong" mtimes.
+
 ## Related GitHub issues
 
 Open threads in `anthropics/claude-code` where users are hitting the disappearing-chats problem. Captured 2026-05-24 — comment counts will drift.
