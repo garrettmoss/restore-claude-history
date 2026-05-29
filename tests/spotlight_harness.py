@@ -34,7 +34,7 @@ import threading
 import time
 from pathlib import Path
 
-BUCKETS = ["mdworker_shared", "mds", "mds_stores", "CGPDFService", "corespotlightd"]
+BUCKETS = ["mds", "mds_stores", "mdworker_shared", "CGPDFService", "mdsync", "corespotlightd"]
 # Sample offsets in seconds, relative to each phase marker.
 OFFSETS = [0.0, 1.0, 5.0, 15.0, 30.0]
 
@@ -116,9 +116,11 @@ def apply_strategy(strategy: str, mp: Path) -> None:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--device", required=True, help="e.g. disk5s2")
-    ap.add_argument("--snapshot", required=True, help="snapshot name (com.apple.TimeMachine.YYYY-...)")
-    ap.add_argument("--kind", choices=["tm", "local"], required=True)
+    ap.add_argument("--device", help="e.g. disk5s2 (omit for --idle)")
+    ap.add_argument("--snapshot", help="snapshot name com.apple.TimeMachine.YYYY-... (omit for --idle)")
+    ap.add_argument("--kind", choices=["tm", "local"], help="omit for --idle")
+    ap.add_argument("--idle", action="store_true",
+                    help="don't mount anything; just sample current process counts over 30s")
     ap.add_argument("--strategy", default="none",
                     choices=["none", "mdutil-off", "metadata-marker", "tmutil-exclude", "mount-flags"])
     ap.add_argument("--post-unmount-window", type=float, default=30.0,
@@ -127,6 +129,15 @@ def main() -> int:
 
     # Header
     print("phase\telapsed_s\t" + "\t".join(BUCKETS), flush=True)
+
+    if args.idle:
+        t0 = time.monotonic()
+        sample_series("idle", t0, [0.0, 5.0, 10.0, 15.0, 20.0, 25.0, 30.0])
+        print("# done idle", file=sys.stderr, flush=True)
+        return 0
+
+    if not (args.device and args.snapshot and args.kind):
+        ap.error("--device, --snapshot, and --kind are required unless --idle is set")
 
     with tempfile.TemporaryDirectory(prefix="sh-harness-") as tmp:
         mp = Path(tmp) / f"snap-{args.kind}"
