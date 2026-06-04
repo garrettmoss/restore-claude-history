@@ -90,27 +90,34 @@ The Claude Desktop app has an embedded Claude Code area that lists past sessions
 
 Confirmed path: `~/Library/Application Support/Claude/claude-code-sessions/<group>/<project>/local_*.json` (verified 2026-05-27 — one group dir present on this machine with 11 `local_*.json` metadata entries).
 
-Other adjacent dirs that may matter:
-- `~/Library/Application Support/Claude/claude-code/`
-- `~/Library/Application Support/Claude/claude-code-vm/`
-- `~/Library/Application Support/Claude/local-agent-mode-sessions/`
+Storage layout (verified 2026-06-04 on macOS):
+- `~/Library/Application Support/Claude/claude-code-sessions/<acct-uuid>/<org-uuid>/local_*.json` — UI-layer metadata (one file per session). NOT transcript content.
+- `~/.claude/projects/<encoded-cwd>/<sessionId>.jsonl` — transcript content. Same location Claude Code CLI / VS Code use; shared store.
+- `~/.claude/projects/<encoded-cwd>/sessions-index.json` — Desktop's authoritative manifest of what JSONLs *should* exist in this project, with firstPrompt + messageCount + dates. Written by Desktop. Discovered 2026-06-04; not present on every project (only confirmed on `data-of-being` so far — investigate when y-l-p is opened in Desktop next).
+- `~/.claude/projects/<encoded-cwd>/<sessionId>/subagents/agent-*.jsonl` — subagent transcript fragments. Survive parent-JSONL deletion in at least some cases.
+
+Ruled out as out-of-scope for transcript recovery (verified 2026-06-04):
+- `~/Library/Application Support/Claude/claude-code/` — bundled CLI binary (`<version>/claude.app/`).
+- `~/Library/Application Support/Claude/claude-code-vm/` — bundled VM runtime.
+- `~/Library/Application Support/Claude/local-agent-mode-sessions/skills-plugin/` — extension config.
+
+`local-agent-mode-sessions/<acct>/<org>/` does hold Cowork (agent-mode) session content but that's a separate surface — out of scope for the first cut.
+
+### Investigation 2026-06-04 — two failure modes identified
+
+See NOTES.md → "Claude Desktop session recovery — failure-mode taxonomy" for the full writeup. Summary:
+
+- **Mode A ("Session not found on disk" / "Message not found on disk") is a metadata-only failure.** JSONLs verified present on this machine for `young-ladys-primer`; the broken state is missing `cliSessionId` in `local_*.json`. Snapshot diff vs 2026-04-17 showed `cliSessionId` *was* present historically — Desktop stripped it. **No transcript restore needed for this mode**; fix is metadata repair or wholesale metadata restore from snapshot.
+- **Mode B ("No messages yet") is a full content loss.** For `data-of-being`, all 5 referenced JSONLs were missing from every available snapshot (oldest 2026-03-11). Content gone before the snapshot window opens — unrecoverable on this machine. For other users with longer snapshot history, this might still recover via the existing `restore_claude_history.py` flow against `~/.claude/projects/`.
+- **`sessions-index.json` is the linchpin for both modes.** Tells us authoritatively what JSONLs *should* be in a project dir — so Mode B detection becomes "filenames in index, missing from disk" (no timestamp-matching needed), and Mode A becomes "JSONL on disk, metadata broken."
 
 ### Subtask: metadata synthesis after a Time Machine restore
 
 Raised by @BasedGPT on [#62272](https://github.com/anthropics/claude-code/issues/62272#issuecomment-4554894518) (and corroborated by @ShreeshaJay on [#48334](https://github.com/anthropics/claude-code/issues/48334)): JSONLs restored into `~/.claude/projects/` *without* a matching `local_*.json` entry in `claude-code-sessions/` get treated as orphans on the next cleanup pass and re-deleted. Originally observed on Windows; the path exists on macOS too, so the same risk almost certainly applies here.
 
-This means the current `restore_claude_history.py` flow has a gap: a successful restore can be silently undone on the next sweep if metadata isn't synthesised alongside the JSONLs. Fixing this is the natural bridge into the broader Desktop recovery work below — same files, same machine, same investigation.
+This means the current `restore_claude_history.py` flow has a gap: a successful restore can be silently undone on the next sweep if metadata isn't synthesised alongside the JSONLs. Fixing this is the natural bridge into the broader Desktop recovery work — same files, same machine, same investigation.
 
-Reference implementation: [`BasedGPT/claude-code-session-recovery` → `tools/sessions/synth_session_metadata.py`](https://github.com/BasedGPT/claude-code-session-recovery/blob/main/tools/sessions/synth_session_metadata.py). Windows-targeted; logic ports. He gave permission to use it as the reference (and we gave him reciprocal permission on our largest-file + mtime-preservation code). Credit + link when this lands. I publicly committed to this being "next" in the [#62272 reply](https://github.com/anthropics/claude-code/issues/62272), so don't let it drift.
-
-### Broader Desktop recovery — suggested approach for whoever picks this up
-1. **Investigate first, code second.** Look at what's actually in those dirs, what file format the sessions use, and whether the UI is reading from the same place we'd be writing to. Don't assume it works like Claude Code's `~/.claude/projects/`.
-2. **Compare against a Time Machine snapshot.** Mount a snapshot, compare the same dirs inside it to what's on disk now. The diff *is* the deleted content.
-3. **Decide: extend `restore_claude_history.py` or write a sibling?** Depends on how similar the file layout and recovery logic are. If JSONLs in a parallel dir, probably one script with a `--desktop` flag. If wildly different format (SQLite, IndexedDB, encrypted blobs, etc.), a sibling script is cleaner.
-4. **Start with `young-ladys-primer`.** It's the same project we used for the Claude Code recovery, so we know what "before" looks like and have a good chance of finding restorable data in the snapshots. The UI currently shows these chats with the title "Session not found on disk" and the subtitle "Send a message to start fresh in this directory" (along with "Archive" and "Delete" buttons — note: not "Recover"). Hopefully this is the more recoverable failure mode of the two.
-5. **Then stress-test on `data-of-being`.** Its chats show "no messages yet" — a more severe failure mode. Possibly older than the available Time Machine snapshots, in which case this one may genuinely be unrecoverable. Useful either way: success expands the script's coverage, failure tells us where the floor is.
-
-NOTES.md has the design rationale and gotchas from the Claude Code recovery work — most of the snapshot-handling, ACL-stripping, and mtime-preservation logic will carry over.
+Reference implementation: [`BasedGPT/claude-code-session-recovery` → `tools/sessions/synth_session_metadata.py`](https://github.com/BasedGPT/claude-code-session-recovery/blob/main/tools/sessions/synth_session_metadata.py). Windows-targeted; logic ports. He gave permission to use it as the reference (and we gave him reciprocal permission on our largest-file + mtime-preservation code). Credit + link when this lands. I publicly committed to this being "next" in the [#62272 reply](https://github.com/anthropics/claude-code/issues/62272), so don't let it drift. Design notes pulled from his code are in [personal-notes.md](personal-notes.md) → "Desktop recovery — design notes from BasedGPT's reference impl".
 
 ## Stretch: user-hosted Claude chat backups
 
