@@ -48,9 +48,9 @@ Reality check on coverage: Apple docs claim "hourly local snapshots, retained 24
 
 Also shipped alongside: `--list-only` flag for machine-readable preview, and the test harness (`verify_restore.py`) now uses it to pick test files from the intersection of (on-disk) ∩ (in-snapshot) and assert restored size + mtime match the snapshot's, not the live file's.
 
-## ~~Quiet Spotlight on snapshot mounts (v1.2)~~ — investigated 2026-06-01, not shipping
+## Quiet Spotlight on snapshot mounts (v1.2) — investigated 2026-06-01, **paused**
 
-**Result: no ship.** Spent a session measuring with `tests/spotlight_harness.py` and confirmed the CPU pain is **outside our script's reach.** Detailed findings in [NOTES.md](NOTES.md) ("Spotlight indexes the macOS-owned auto-mount..." entry) and the harness logs at [tests/logs/index.md](tests/logs/index.md). Summary:
+**Status: paused, not abandoned.** Spent a session measuring with `tests/spotlight_harness.py` and confirmed the CPU pain on the TM-drive path is **outside our script's reach via the strategies we'd queued.** Not blocking the main Claude-restoration script's roadmap, but the harness + logs + parked question all stay around for a future session that wants to pick this back up — possibly as its own repo if the spotlight-tamer work outgrows this project's scope. Detailed findings in [NOTES.md](NOTES.md) ("Spotlight indexes the macOS-owned auto-mount..." entry) and the harness logs at [tests/logs/index.md](tests/logs/index.md). Summary:
 
 - Drive plugged + unlocked, *no script*: 11 CGPDFService at 195% CPU. The swarm starts before we run anything.
 - Our temp snapshot mount is invisible to Spotlight (`mdutil -s` says "unknown indexing state"). Strategies targeting our mountpoint don't address what's actually being scanned.
