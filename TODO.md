@@ -103,13 +103,25 @@ Ruled out as out-of-scope for transcript recovery (verified 2026-06-04):
 
 `local-agent-mode-sessions/<acct>/<org>/` does hold Cowork (agent-mode) session content but that's a separate surface — out of scope for the first cut.
 
-### Investigation 2026-06-04 — two failure modes identified
+### Investigation 2026-06-04 — failure modes + Mode A recipe proven
 
 See NOTES.md → "Claude Desktop session recovery — failure-mode taxonomy" for the full writeup. Summary:
 
-- **Mode A ("Session not found on disk" / "Message not found on disk") is a metadata-only failure.** JSONLs verified present on this machine for `young-ladys-primer`; the broken state is missing `cliSessionId` in `local_*.json`. Snapshot diff vs 2026-04-17 showed `cliSessionId` *was* present historically — Desktop stripped it. **No transcript restore needed for this mode**; fix is metadata repair or wholesale metadata restore from snapshot.
+- **Mode A ("Session not found on disk" / "Message not found on disk") is a metadata-only failure, and the fix is one field.** Proven by hand 2026-06-04 on two `young-ladys-primer` sessions: adding `cliSessionId` (= JSONL filename UUID) to the broken `local_*.json` and removing `transcriptUnavailable` is sufficient. Desktop re-bloats the file with current-schema fields on next load but preserves `cliSessionId` and does not re-add `transcriptUnavailable`. So `transcriptUnavailable: true` is symptom, not cause — Desktop writes it when `cliSessionId` is missing at load time.
 - **Mode B ("No messages yet") is a full content loss.** For `data-of-being`, all 5 referenced JSONLs were missing from every available snapshot (oldest 2026-03-11). Content gone before the snapshot window opens — unrecoverable on this machine. For other users with longer snapshot history, this might still recover via the existing `restore_claude_history.py` flow against `~/.claude/projects/`.
-- **`sessions-index.json` is the linchpin for both modes.** Tells us authoritatively what JSONLs *should* be in a project dir — so Mode B detection becomes "filenames in index, missing from disk" (no timestamp-matching needed), and Mode A becomes "JSONL on disk, metadata broken."
+- **`sessions-index.json` is the linchpin for detection.** Authoritative manifest of what JSONLs *should* be in a project dir — so Mode B detection is "filenames in index, missing from disk," and Mode A is "JSONL on disk, metadata broken."
+
+### Design (post-investigation)
+
+**Strategy tier reversal vs. what we originally planned:** surgical edit is the *primary* path for Mode A; snapshot restore is the *fallback*. Most users will get a fix with no external drive required — meaningful for the publicity story.
+
+- **Mode A primary — surgical edit.** For each broken `local_*.json`: find the matching JSONL by `createdAt` ↔ first-record `timestamp` (sub-second match on this machine; refuse on ambiguity rather than guessing); write `cliSessionId = <JSONL UUID>`; remove `transcriptUnavailable`; leave every other field alone. No TM drive needed.
+- **Mode A fallback — snapshot restore.** Triggers when JSONL matching is ambiguous (multiple candidates within the createdAt window). Pull `local_*.json` from the newest TM/local snapshot where it has `cliSessionId` present. Sidesteps the match-ambiguity problem because the snapshot already names the right JSONL.
+- **Mode B — JSONL restore + Mode A repair.** Detect via `sessions-index.json` ↔ disk diff. Restore the missing JSONLs from snapshots (same logic as `restore_claude_history.py`). Then run the Mode A path on the metadata. If JSONLs aren't in any snapshot, surface "not recoverable, here's what `sessions-index.json` says was there" — don't fail silently.
+- **Preflight (both modes):** Refuse to mutate metadata while Claude Desktop is running. Verified 2026-06-04 — Desktop re-writes session files from in-memory state within seconds, clobbering edits and re-adding `transcriptUnavailable: true`. Detect a live `Claude.app/Contents/MacOS` process and tell the user to `Cmd-Q` Desktop first. Don't kill it ourselves.
+- **First code milestone: read-only diagnostic.** Print, per project, which mode each session is in and what the recommended fix would be. No mutation. Validates detection + matching against real state before we touch any files.
+
+This obsoletes BasedGPT's "synthesize metadata from scratch" approach for Mode A on the macOS side: we don't need to synthesize anything; Desktop's live metadata is fine except for one missing pointer. Reuse from his work shifts to JSONL-matching idioms and CLI structure, not the synth logic itself. Still credit the reference impl when the script lands.
 
 ### Subtask: metadata synthesis after a Time Machine restore
 
@@ -117,7 +129,7 @@ Raised by @BasedGPT on [#62272](https://github.com/anthropics/claude-code/issues
 
 This means the current `restore_claude_history.py` flow has a gap: a successful restore can be silently undone on the next sweep if metadata isn't synthesised alongside the JSONLs. Fixing this is the natural bridge into the broader Desktop recovery work — same files, same machine, same investigation.
 
-Reference implementation: [`BasedGPT/claude-code-session-recovery` → `tools/sessions/synth_session_metadata.py`](https://github.com/BasedGPT/claude-code-session-recovery/blob/main/tools/sessions/synth_session_metadata.py). Windows-targeted; logic ports. He gave permission to use it as the reference (and we gave him reciprocal permission on our largest-file + mtime-preservation code). Credit + link when this lands. I publicly committed to this being "next" in the [#62272 reply](https://github.com/anthropics/claude-code/issues/62272), so don't let it drift. Design notes pulled from his code are in [personal-notes.md](personal-notes.md) → "Desktop recovery — design notes from BasedGPT's reference impl".
+Reference implementation: [`BasedGPT/claude-code-session-recovery` → `tools/sessions/synth_session_metadata.py`](https://github.com/BasedGPT/claude-code-session-recovery/blob/main/tools/sessions/synth_session_metadata.py). Windows-targeted; full metadata synthesis. Post-2026-06-04 investigation, our macOS Mode A path doesn't need to synthesize — the live broken file is fine except for one missing field — but his code is still the right reference for JSONL-matching idioms, CLI structure, and the orphan-cleanup risk this subtask is about. He gave permission to use it as the reference (and we gave him reciprocal permission on our largest-file + mtime-preservation code). Credit + link when this lands. I publicly committed to this being "next" in the [#62272 reply](https://github.com/anthropics/claude-code/issues/62272), so don't let it drift. Design notes pulled from his code are in [personal-notes.md](personal-notes.md) → "Desktop recovery — design notes from BasedGPT's reference impl".
 
 ## Stretch: user-hosted Claude chat backups
 
