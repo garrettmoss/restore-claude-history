@@ -4,7 +4,10 @@ Agent guidance for working in this repo. If you're an AI assistant: read this fi
 
 ## Project shape
 
-Single-file Python script (`restore_claude_history.py`) that recovers deleted Claude Code JSONL transcripts from macOS Time Machine snapshots. Standard library only — no dependencies. macOS + APFS only.
+A small toolkit of standalone Python scripts for recovering Claude chat data on macOS. Standard library only — no dependencies. macOS + APFS only. Each script is single-file and runs without the others; share substrate only when a second script actually needs it (don't pre-emptively refactor a common module).
+
+- **`restore_claude_history.py`** — recover deleted Claude Code JSONL transcripts (`~/.claude/projects/<project>/*.jsonl`) from Time Machine and/or local APFS snapshots.
+- **`restore_claude_desktop.py`** — repair Claude Desktop session metadata when the UI shows "Session not found on disk" for transcripts that are still on disk. v1 handles Mode A (surgical edit of `local_*.json`); Mode A snapshot-restore fallback and Mode B (JSONL restore) are deferred. See NOTES.md for the failure-mode taxonomy.
 
 Docs are deliberately split:
 - **README.md** — user-facing: what it does, how to run it.
@@ -15,12 +18,13 @@ When you change behavior, update the relevant doc — usually NOTES.md (for new 
 
 ## Versioning
 
-The script's in-file `__version__` constant and the latest git tag MUST stay in sync.
+Each script is on its own version clock. Each script's in-file `__version__` constant MUST stay in sync with the latest matching prefixed git tag.
 
-- Current: `__version__ = "1.0.0"` in `restore_claude_history.py`; matching git tag `v1.0.0` on origin.
+- **`restore_claude_history.py`** — tags `history-vX.Y.Z`. Current: `__version__ = "1.1.0"`. Historical tags `v1.0.0` / `v1.1.0` (no prefix) refer to this script and stay as-is; the prefix pattern starts from the next bump.
+- **`restore_claude_desktop.py`** — tags `desktop-vX.Y.Z`. Current: `__version__ = "0.1.0"`.
 - `push.followTags = true` is set, so annotated tags travel with `git push` automatically. Don't push tags separately.
-- When bumping version: edit `__version__`, commit, tag the commit (`git tag -a vX.Y.Z -m "..."`), push. Both updates go in the same commit as the change they describe.
-- Users run `python3 restore_claude_history.py --version` to report bugs. If they say "1.0.0" and the latest tag is `v1.2.0`, that's a stale clone.
+- When bumping a script's version: edit its `__version__`, commit, tag the commit with the script's prefix (`git tag -a desktop-vX.Y.Z -m "..."` or `history-vX.Y.Z`), push. Both updates go in the same commit as the change they describe.
+- Users run `python3 <script>.py --version` to report bugs. Tell them to mention which script and which version — "history 1.1.0" vs "desktop 0.1.0" are different release lanes now.
 
 ## Things that are easy to get wrong
 
