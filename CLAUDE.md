@@ -28,7 +28,16 @@ Each script is on its own version clock. Each script's in-file `__version__` con
 
 ## Things that are easy to get wrong
 
+### `restore_claude_history.py`
+
 - **mtime preservation is load-bearing.** The script preserves the snapshot's original mtime on restored files. Do NOT rewrite mtimes to in-file message timestamps — that triggers the very cleanup bug we're working around. See the @ojura/#59248 gotcha in NOTES.md.
-- **Encoded project names start with `-`.** Argparse rejects them as flags. The script pre-rewrites `--project FOO` → `--project=FOO`. Don't undo this.
+- **Encoded project names start with `-`.** Argparse rejects them as flags. The script pre-rewrites `--project FOO` → `--project=FOO`. Don't undo this. (Same gotcha applies to `restore_claude_desktop.py`.)
 - **Don't touch macOS auto-mounted snapshots.** The script distinguishes between snapshots it mounted (cleanup unmounts them) and pre-existing macOS auto-mounts (left alone). The `owned_by_us` flag on the `Snapshot` dataclass exists for exactly this reason.
 - **Time Machine drive must be plugged in for any non-trivial test.** Without it, the script exits early at `find_tm_volume()`. Spotlight indexes mounted TM volumes aggressively; keep test runs short and unplug when done.
+
+### `restore_claude_desktop.py`
+
+- **`cliSessionId` is the single load-bearing field.** Mode A repair is "add `cliSessionId` matching the JSONL UUID, remove `transcriptUnavailable`, leave every other field alone." Don't expand the edit surface — Desktop re-writes the file on next load and the only thing it actually needs from us is that one field. See NOTES.md "Claude Desktop session recovery — failure-mode taxonomy."
+- **Desktop must be fully quit before editing.** The script refuses to run while `Claude.app/Contents/MacOS` is alive — Desktop rewrites session files from in-memory state within seconds and will clobber any edits. Don't false-positive on the `chrome-native-host` helper; it's a separate process and doesn't touch session files.
+- **`VERIFIED_CLAUDE_DESKTOP_VERSION` is a compatibility footprint, not a ceiling.** Bump it (and re-verify end-to-end) when running against a newer Desktop release. If a future Desktop version breaks the recipe, the constant is the last known-working bisection target.
+- **JSONL matching must refuse on ambiguity.** When two JSONLs fall inside the createdAt tolerance window, mark the session NEEDS REVIEW and don't guess. The snapshot-restore fallback (v0.2.0+) is the right answer for those cases.

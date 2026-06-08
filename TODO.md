@@ -10,7 +10,7 @@ Suggested order (lowest cost / highest signal first):
 
 - [x] **1. Fill in `NOTES.md` → "Related GitHub issues" section.** Searched `anthropics/claude-code` for `cleanupPeriodDays`, `history deleted`, `lost chats`, `session not found`, `transcript missing`. Captured 16 threads grouped by priority in NOTES.md. *Done 2026-05-24.*
 
-- [ ] **2. Comment on each of those issues.** 🟡 *In progress: 1 of ~16 posted (#59248 on 2026-05-24). Next up: #41458, then expand if traction. See NOTES.md checklist for the full ordered list.* Short, helpful, not spammy. Example:
+- [ ] **2. Comment on each of those issues.** 🟡 *In progress: 5 of ~16 posted (#59248, #41458, #26452, #9258 plus #62272 body + replies, all by 2026-05-27). With `desktop-v0.1.0` shipped, the Desktop-failure-mode threads (#61608 first, then #48334 / #38691 / #51412 / #59736) are now in scope too. See NOTES.md checklist for the full ordered list.* Short, helpful, not spammy. Example:
 
    > Had this happen and built a recovery tool for it (macOS + Time Machine only): https://github.com/garrettmoss/restore-claude-history
 
@@ -18,9 +18,9 @@ Suggested order (lowest cost / highest signal first):
 
 - [x] **3. File a new issue on `anthropics/claude-code`** if no good thread exists for it. Filed [#62272](https://github.com/anthropics/claude-code/issues/62272) on 2026-05-25 — "Chat JSONLs deleted from `~/.claude/projects/` despite `cleanupPeriodDays` set high — appears triggered by updates/restarts." Asks for any of: honor the setting, warn before deletion, surface in UI.
 
-- [ ] **4. Reddit.** Candidates: r/ClaudeAI (most direct audience), r/MachineLearning (broader), r/macsysadmin (the Time Machine angle). One post per sub, spread over a few days. Title something like "Recovered months of deleted Claude Code chats from Time Machine — script + writeup".
+- [ ] **4. Reddit.** Candidates: r/ClaudeAI (most direct audience), r/MachineLearning (broader), r/macsysadmin (the Time Machine angle). One post per sub, spread over a few days. With the Desktop tool shipped, the story sharpens: "two scripts — one fixes 'Session not found on disk' with no external drive; the other restores deleted JSONLs from Time Machine if you've lost the content too." Lead with the no-drive angle — it's the lower-friction hook.
 
-- [ ] **5. Hacker News** (news.ycombinator.com). Submit as `Show HN: restore-claude-history – recover deleted Claude Code chats from Time Machine`. HN front page = hundreds of GitHub stars in a day; most submissions vanish. Low cost, asymmetric upside. Best times to submit: weekday mornings US time.
+- [ ] **5. Hacker News** (news.ycombinator.com). Submit as `Show HN: restore-claude-history – recover deleted Claude Code chats (and repair Claude Desktop's "Session not found on disk")`. The Desktop angle is the stronger lead — "fix Claude Desktop's broken sidebar with a single-field metadata edit" is more concrete than the TM recovery story alone. HN front page = hundreds of GitHub stars in a day; most submissions vanish. Low cost, asymmetric upside. Best times to submit: weekday mornings US time.
 
 - [ ] **6. dev.to** — write a short post walking through the bug, the prevention setting, and how the recovery works. Indexed by Google long-term; useful for anyone searching "claude code chat history deleted" months from now.
 
@@ -86,6 +86,8 @@ Apply the same treatment in [tests/spotlight_harness.py](tests/spotlight_harness
 
 ## Claude Desktop session recovery
 
+> **Status (2026-06-08): `restore_claude_desktop.py` `desktop-v0.1.0` shipped.** Mode A surgical edit works end-to-end on Claude Desktop 1.11187.4 (verified pre- and post-auto-update on the maintainer's machine). Mode A snapshot-restore fallback (v0.2.0) and Mode B JSONL restore (v0.3.0) remain deferred — see "Deferred work" subsection below. The rest of this section is preserved as the original investigation + design record.
+
 The Claude Desktop app has an embedded Claude Code area that lists past sessions in its UI, but clicking them often shows **"Session not found on disk"** — same disappearing-chat problem as Claude Code CLI, different storage location.
 
 Confirmed path: `~/Library/Application Support/Claude/claude-code-sessions/<group>/<project>/local_*.json` (verified 2026-05-27 — one group dir present on this machine with 11 `local_*.json` metadata entries).
@@ -130,6 +132,15 @@ Raised by @BasedGPT on [#62272](https://github.com/anthropics/claude-code/issues
 This means the current `restore_claude_history.py` flow has a gap: a successful restore can be silently undone on the next sweep if metadata isn't synthesised alongside the JSONLs. Fixing this is the natural bridge into the broader Desktop recovery work — same files, same machine, same investigation.
 
 Reference implementation: [`BasedGPT/claude-code-session-recovery` → `tools/sessions/synth_session_metadata.py`](https://github.com/BasedGPT/claude-code-session-recovery/blob/main/tools/sessions/synth_session_metadata.py). Windows-targeted; full metadata synthesis. Post-2026-06-04 investigation, our macOS Mode A path doesn't need to synthesize — the live broken file is fine except for one missing field — but his code is still the right reference for JSONL-matching idioms, CLI structure, and the orphan-cleanup risk this subtask is about. He gave permission to use it as the reference (and we gave him reciprocal permission on our largest-file + mtime-preservation code). Credit + link when this lands. I publicly committed to this being "next" in the [#62272 reply](https://github.com/anthropics/claude-code/issues/62272), so don't let it drift. Design notes pulled from his code are in [personal-notes.md](personal-notes.md) → "Desktop recovery — design notes from BasedGPT's reference impl".
+
+### Deferred work (post-v0.1.0)
+
+`desktop-v0.1.0` ships the Mode A surgical-edit path. Two paths remain on the roadmap; both reuse logic from `restore_claude_history.py` and would justify factoring out a shared snapshot-mounting module.
+
+- **v0.2.0 — Mode A snapshot fallback.** Triggers when the script's report shows NEEDS REVIEW (multiple transcript candidates within `--match-tolerance` of the metadata `createdAt`). Recipe: pull `local_*.json` from the newest TM or local snapshot where it has `cliSessionId` present, then copy over the live broken file using the existing `cp -p` + `chmod -N` + `chmod u+w` recipe from the main script. No NEEDS REVIEW cases on this machine, so this would be coded against a hypothetical — wait for a user report or build a test fixture deliberately.
+- **v0.3.0 — Mode B JSONL restore.** Triggers on LOST sessions. Diff `sessions-index.json` ↔ live `~/.claude/projects/<encoded>/` to enumerate missing JSONLs; restore them from snapshots using main-script logic; then run the Mode A path on the corresponding metadata. Users with snapshot coverage that reaches back far enough to actually catch the deletion are rare in practice (the maintainer's case had nothing recoverable past 2026-03-11). Defer until a user actually hits it; otherwise we're coding against the maintainer's failure shape only.
+
+When v0.2 lands, factor `Snapshot`, `mount_snapshot`, `unmount_if_ours`, `find_data_root`, and the encoded-project-name pre-rewrite into a `snapshots.py` module both scripts import. Don't do this pre-emptively per CLAUDE.md.
 
 ## Stretch: user-hosted Claude chat backups
 

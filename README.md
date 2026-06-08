@@ -1,12 +1,19 @@
 # restore-claude-history
 
-Recover deleted Claude Code chat transcripts from macOS Time Machine snapshots.
+Two small macOS tools for recovering Claude chats:
+
+- **[`restore_claude_history.py`](restore_claude_history.py)** — your transcripts were deleted from `~/.claude/projects/`. Pulls them back from Time Machine or local APFS snapshots.
+- **[`restore_claude_desktop.py`](restore_claude_desktop.py)** — Claude Desktop's UI shows **"Session not found on disk"** for sessions whose transcript is still there. Repairs the broken metadata link, no external drive required.
+
+Either tool is useful on its own. The Desktop tool's primary repair path needs only local files; the history tool needs a Time Machine drive *or* local snapshots.
 
 ## Background
 
 Claude Code stores chat transcripts as JSONL files under `~/.claude/projects/<encoded-cwd>/`. A cleanup job prunes them after `cleanupPeriodDays` (default: **30 days**, undocumented, no warning). If you haven't changed that setting, you've probably already lost months of conversations.
 
-If you have a macOS Time Machine drive — or if you have local APFS snapshots on your internal disk (typically present even when the drive is unplugged, as long as you've run Time Machine recently) — this script ([`restore_claude_history.py`](restore_claude_history.py)) can get them back.
+If you have a macOS Time Machine drive — or if you have local APFS snapshots on your internal disk (typically present even when the drive is unplugged, as long as you've run Time Machine recently) — [`restore_claude_history.py`](restore_claude_history.py) can get them back.
+
+Separately, Claude Desktop has its own failure mode: the UI says "Session not found on disk" for a transcript that's literally still on disk. This happens because Desktop's per-session metadata files (`~/Library/Application Support/Claude/claude-code-sessions/.../local_*.json`) lose the `cliSessionId` field that links the metadata to the transcript. [`restore_claude_desktop.py`](restore_claude_desktop.py) fixes that link.
 
 ## Prevention first
 
@@ -80,9 +87,71 @@ python3 tests/verify_restore.py --project=-Users-you-projects-foo
 python3 tests/verify_restore.py --project=-Users-you-projects-foo --source=local
 ```
 
+## Claude Desktop repair
+
+This script: [`restore_claude_desktop.py`](restore_claude_desktop.py)
+
+Repairs Claude Desktop session metadata so the UI stops showing **"Session not found on disk"** for transcripts that are still on disk under `~/.claude/projects/`. No Time Machine drive needed — the primary repair path is a single-field edit to a local metadata file.
+
+### Requirements
+
+- macOS with Claude Desktop installed.
+- **Claude Desktop fully quit** (Cmd-Q, not just closed) before running. The script refuses to act otherwise — Desktop rewrites its session files from in-memory state and will clobber any edits made while it's running.
+- Python 3.7+.
+
+### Quickstart
+
+```bash
+# See what's broken and what would be fixed. No changes:
+python3 restore_claude_desktop.py --dry-run
+
+# Actually fix. Backs up the Desktop sessions dir to /tmp first:
+python3 restore_claude_desktop.py
+```
+
+Sample output:
+
+```
+  STATUS        SESSION
+  ------------- --------------------------------------------------
+
+  /Users/you/projects/foo
+  FIXABLE       Initial setup of build pipeline
+  OK            Refactor auth flow
+  LOST          Old conversation about caching
+
+Summary
+  FIXABLE: 1 session can be repaired by this script (run without --dry-run to apply)
+  OK:      1 session loads correctly in Claude Desktop
+  LOST:    1 session has broken metadata AND no transcript on disk
+```
+
+Then launch Claude Desktop to verify — repaired sessions should load normally.
+
+### What the labels mean
+
+- **OK** — the session loads correctly in Claude Desktop. No action needed.
+- **FIXABLE** — metadata is broken but the transcript is still on disk. This is what the script repairs: it writes the missing `cliSessionId` field pointing to the matching transcript, then removes the `transcriptUnavailable` flag. Every other field is left untouched.
+- **LOST** — metadata is broken AND no transcript is on disk for it. The script can't help here directly; you'd need a Time Machine (or other snapshot) backup that reaches back to before the transcript was deleted. [`restore_claude_history.py`](restore_claude_history.py) handles that side.
+- **NEEDS REVIEW** — metadata is broken and multiple transcripts on disk start within seconds of when the session was created, so the script can't tell which one belongs. Skipped rather than guessed. A future version will fall back to restoring metadata from a Time Machine snapshot for these.
+
+### Flags
+
+| Flag | What it does |
+|---|---|
+| `--dry-run` | Report only; don't modify any files. |
+| `--no-backup` | Skip the pre-apply backup. By default the Desktop sessions dir is copied to `/tmp/claude-code-sessions.backup-<timestamp>/` before any edits. |
+| `--project NAME` | Limit to one encoded project dir (e.g. `--project=-Users-you-projects-foo`). Note the `=`. |
+| `--match-tolerance SECONDS` | Max time delta between metadata `createdAt` and transcript first-record timestamp for a confident match (default: 60). |
+| `--verbose` | Show per-row diagnostic detail and a line per applied fix. |
+
+### Verified compatibility
+
+`v0.1.0` is verified working end-to-end on Claude Desktop **1.11187.4** (both pre- and post-auto-update). Run `python3 restore_claude_desktop.py --version` to see which Desktop version your installed copy was verified against. If a newer Desktop release breaks the recipe, the verified version is the last known-working bisection target — please open an issue with details.
+
 ## Background reading
 
-See [NOTES.md](NOTES.md) for the full story: how the bug works, what Time Machine snapshots actually look like, what we tried that didn't work, and the verified working commands from the original recovery session.
+See [NOTES.md](NOTES.md) for the full story: how the bug works, what Time Machine snapshots actually look like, what we tried that didn't work, and the verified working commands from the original recovery session. The "Claude Desktop session recovery — failure-mode taxonomy" section there documents the Mode A / Mode B split the Desktop tool acts on.
 
 ### See also
 
