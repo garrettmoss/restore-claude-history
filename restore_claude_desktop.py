@@ -274,11 +274,7 @@ def diagnose(meta: MetaFile, home: Path, tolerance_seconds: float) -> Diagnosis:
         # We don't try to map session_id → JSONL UUID here because (a) Desktop's
         # session_id is `local_<uuid>`, not the JSONL UUID, and (b) absence of
         # any JSONL in the project dir is sufficient evidence either way.
-        return Diagnosis(
-            meta=meta,
-            mode="mode-b",
-            note="no JSONLs in project dir; transcript restore needed (out of scope for v1)",
-        )
+        return Diagnosis(meta=meta, mode="mode-b")
 
     best, delta, ambiguous = pick_match(meta, candidates, tolerance_seconds)
     if best is not None:
@@ -293,13 +289,13 @@ def diagnose(meta: MetaFile, home: Path, tolerance_seconds: float) -> Diagnosis:
             meta=meta,
             mode="mode-a-ambiguous",
             ambiguous_candidates=ambiguous,
-            note=f"{len(ambiguous)} JSONLs within {tolerance_seconds:.0f}s of createdAt; "
-                 f"snapshot-restore fallback needed (out of scope for v1)",
+            note=f"{len(ambiguous)} transcript candidates within "
+                 f"{tolerance_seconds:.0f}s of session start",
         )
     return Diagnosis(
         meta=meta,
         mode="unknown",
-        note="no JSONL in project dir matched createdAt within tolerance",
+        note="no transcript on disk matches the session's start time",
     )
 
 
@@ -352,41 +348,123 @@ def apply_mode_a_fix(diag: Diagnosis, verbose: bool) -> bool:
 # -------- reporting --------
 
 
-def short_id(session_id: str) -> str:
-    """`local_ece5671d-82d5-...` → `ece5671d`."""
-    s = session_id
-    if s.startswith("local_"):
-        s = s[len("local_"):]
-    return s.split("-", 1)[0]
+# Human-facing label for each internal mode. Order here drives the action-first
+# sort in the report (FIXABLE first, OK middle, LOST last).
+MODE_DISPLAY: dict[str, str] = {
+    "mode-a": "FIXABLE",
+    "mode-a-ambiguous": "NEEDS REVIEW",
+    "unknown": "UNKNOWN",
+    "healthy": "OK",
+    "mode-b": "LOST",
+}
+
+# Plain-language explanation for the summary footer. Only shown for modes that
+# actually appear in the report.
+MODE_FOOTER: dict[str, str] = {
+    "OK": "load correctly in Claude Desktop",
+    "FIXABLE": "can be repaired by this script (run without --dry-run to apply)",
+    "NEEDS REVIEW": "have multiple candidate transcripts; skipped rather than guess",
+    "LOST": "have broken metadata AND no transcript on disk",
+    "UNKNOWN": "couldn't be classified (see per-row note above)",
+}
+
+# Long-form callouts shown only when a mode appears in the report. Keyed by
+# display label so we don't have to duplicate the "what now?" advice on every row.
+MODE_CALLOUT: dict[str, str] = {
+    "LOST": (
+        "LOST sessions have no transcript on disk under ~/.claude/projects/.\n"
+        "  Recovery is possible only if you have a Time Machine (or other\n"
+        "  snapshot) backup that reaches back to before the deletion. See\n"
+        "  restore_claude_history.py — this script doesn't restore transcript\n"
+        "  content yet."
+    ),
+    "NEEDS REVIEW": (
+        "NEEDS REVIEW sessions have multiple transcripts on disk that start\n"
+        "  within seconds of when the session was created, so we can't tell\n"
+        "  which one belongs. They're skipped rather than guessed. A future\n"
+        "  version will fall back to restoring metadata from a snapshot."
+    ),
+}
 
 
-def print_report(diagnoses: list[Diagnosis]) -> None:
-    """Per-session line + per-mode summary. Goes to stdout."""
-    by_project: dict[str, list[Diagnosis]] = {}
-    for d in diagnoses:
-        by_project.setdefault(d.meta.project_cwd, []).append(d)
+def _row(status: str, title: str, archived: bool, extra: str = "") -> str:
+    """Format one report row with fixed-width columns."""
+    arch = " (archived)" if archived else ""
+    base = title or "(untitled)"
+    # Truncate the title itself (not the archived suffix), so "(archived)" never
+    # gets clipped off the end.
+    max_title = 56 - len(arch)
+    if len(base) > max_title:
+        base = base[:max_title - 1] + "…"
+    line = f"  {status:<13} {base}{arch}"
+    if extra:
+        line += f"  {extra}"
+    return line
 
-    for cwd in sorted(by_project):
-        print(f"\n{cwd}")
-        for d in by_project[cwd]:
-            tag = d.mode
-            arch = " [archived]" if d.meta.is_archived else ""
-            title = (d.meta.title or "(untitled)")[:60]
-            line = f"  {tag:<20} {short_id(d.meta.session_id):<8}  {title}{arch}"
-            if d.mode == "mode-a" and d.matched_jsonl is not None:
-                line += f"  ← {d.matched_jsonl.uuid} (Δ{d.match_delta_seconds:.2f}s)"
-            elif d.note:
-                line += f"  ({d.note})"
-            print(line)
 
-    counts: dict[str, int] = {}
-    for d in diagnoses:
-        counts[d.mode] = counts.get(d.mode, 0) + 1
+def print_report(diagnoses: list[Diagnosis], verbose: bool) -> None:
+    """
+    Action-first report: FIXABLE rows first, then OK, then LOST.
+    Per-project grouping inside each status block.
+
+    Verbose mode appends per-row diagnostic detail (matched JSONL UUID and
+    match delta for FIXABLE rows) — useful when something looks wrong, hidden
+    by default to keep the report scannable.
+    """
+    # Sort: status priority (per MODE_DISPLAY insertion order), then project, then title.
+    status_order = {label: i for i, label in enumerate(MODE_DISPLAY.values())}
+
+    def sort_key(d: Diagnosis) -> tuple:
+        label = MODE_DISPLAY.get(d.mode, "UNKNOWN")
+        return (status_order.get(label, 99), d.meta.project_cwd, d.meta.title or "")
+
+    sorted_diags = sorted(diagnoses, key=sort_key)
+
+    # Group rows by status label, preserving sort order.
+    by_status: dict[str, list[Diagnosis]] = {}
+    for d in sorted_diags:
+        label = MODE_DISPLAY.get(d.mode, "UNKNOWN")
+        by_status.setdefault(label, []).append(d)
+
     print()
-    print("summary:")
-    for mode in ("healthy", "mode-a", "mode-a-ambiguous", "mode-b", "unknown"):
-        if mode in counts:
-            print(f"  {mode}: {counts[mode]}")
+    print(f"  {'STATUS':<13} {'SESSION'}")
+    print(f"  {'-' * 13} {'-' * 50}")
+
+    for label, diags in by_status.items():
+        # Sub-group within each status by project, for readability when there
+        # are several. Print the project path as a light header before the rows.
+        by_project: dict[str, list[Diagnosis]] = {}
+        for d in diags:
+            by_project.setdefault(d.meta.project_cwd, []).append(d)
+        for cwd in sorted(by_project):
+            print()
+            print(f"  {cwd}")
+            for d in by_project[cwd]:
+                extra = ""
+                if verbose and d.mode == "mode-a" and d.matched_jsonl is not None:
+                    extra = f"← {d.matched_jsonl.uuid[:8]} (Δ{d.match_delta_seconds:.2f}s)"
+                elif d.note:
+                    # Notes only ever shown for the rare cases that have one
+                    # (NEEDS REVIEW, UNKNOWN). LOST and OK rows have no per-row
+                    # note — their meaning is fully carried by the label + the
+                    # callout/footer at the end.
+                    extra = f"— {d.note}"
+                print(_row(label, d.meta.title, d.meta.is_archived, extra))
+
+    # Summary
+    print()
+    print("Summary")
+    for label in MODE_DISPLAY.values():
+        if label in by_status:
+            count = len(by_status[label])
+            noun = "session" if count == 1 else "sessions"
+            print(f"  {label}: {count} {noun} {MODE_FOOTER[label]}")
+
+    # Long-form callouts for the modes that need them
+    for label in MODE_DISPLAY.values():
+        if label in by_status and label in MODE_CALLOUT:
+            print()
+            print(MODE_CALLOUT[label])
 
 
 # -------- argv & main --------
@@ -404,8 +482,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--dry-run", action="store_true",
                    help="Report only; do not modify any files.")
     p.add_argument("--no-backup", action="store_true",
-                   help="Skip the pre-apply backup of the sessions dir to /tmp. "
-                        "Off by default — we back up unless you opt out.")
+                   help="Skip the pre-apply backup. By default we copy the "
+                        "Desktop sessions dir to /tmp before any edits.")
     p.add_argument("--project", default=None,
                    help="Limit to one encoded project dir name "
                         "(e.g. -Users-you-projects-foo). Starts with '-' — pass with = "
@@ -414,7 +492,8 @@ def parse_args() -> argparse.Namespace:
                    help="Max seconds between metadata createdAt and JSONL first-record "
                         "timestamp for a confident match (default: 60).")
     p.add_argument("--verbose", "-v", action="store_true",
-                   help="Print one line per applied fix.")
+                   help="Show per-row diagnostic detail (matched transcript "
+                        "UUID and time delta) and a line per applied fix.")
     return p.parse_args()
 
 
@@ -452,12 +531,12 @@ def main() -> int:
             "Is Claude Desktop installed and has it been launched at least once?")
 
     diagnoses = [diagnose(m, home, args.match_tolerance) for m in metas]
-    print_report(diagnoses)
+    print_report(diagnoses, args.verbose)
 
     fixable = [d for d in diagnoses if d.mode == "mode-a"]
     if not fixable:
         print()
-        print("Nothing to fix in v1 scope (Mode A only).")
+        print("No sessions need repair.")
         return 0
 
     if args.dry_run:
