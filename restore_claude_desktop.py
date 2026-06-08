@@ -25,6 +25,11 @@ from __future__ import annotations
 
 __version__ = "0.1.0"
 
+# Last Claude Desktop version verified working end-to-end. Bump (and re-verify)
+# when running against a newer Desktop release. See NOTES.md → "Claude Desktop
+# session recovery — failure-mode taxonomy" for bisection guidance.
+VERIFIED_CLAUDE_DESKTOP_VERSION = "1.11187.4"
+
 import argparse
 import glob
 import json
@@ -393,7 +398,9 @@ def parse_args() -> argparse.Namespace:
         description="Repair Claude Desktop session metadata "
                     "(\"Session not found on disk\") — macOS only.",
     )
-    p.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
+    p.add_argument("--version", action="version",
+                   version=f"%(prog)s {__version__} "
+                           f"(verified against Claude Desktop {VERIFIED_CLAUDE_DESKTOP_VERSION})")
     p.add_argument("--dry-run", action="store_true",
                    help="Report only; do not modify any files.")
     p.add_argument("--no-backup", action="store_true",
