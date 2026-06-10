@@ -30,37 +30,11 @@ Suggested order (lowest cost / highest signal first):
 
 Tip: track which channels actually drove traffic (GitHub repo Insights → Traffic) so future-you knows what worked.
 
-## ~~Sequential mount/index/unmount refactor~~ (shipped v1.0.1, 2026-05-28)
+## Quiet Spotlight on snapshot mounts (v1.2) — paused
 
-Shipped sequential mount → index → restore → unmount in v1.0.1. Walks snapshots newest-first, dedupes (project, jsonl) pairs via a `seen` set in `main()` (relies on the JSONL append-only invariant: newest snapshot containing a file = largest version). Same for session subdirs — first writer wins.
+**Paused, not abandoned.** Measured with `tests/spotlight_harness.py` (2026-06-01) and confirmed the TM-drive CPU pain is outside the script's reach via the strategies we'd queued — the swarm scans the macOS-owned auto-mount, which we deliberately don't touch. Full findings in [NOTES.md](NOTES.md) ("Spotlight indexes the macOS-owned auto-mount..." entry) and [tests/logs/index.md](tests/logs/index.md). Harness + logs stay around for a future session — possibly its own repo (`spotlight-tamer`) if it outgrows this project.
 
-**Partial improvement, not a cure.** Observed 2026-05-28 (4 snapshots, M-series Mac): no longer saw the 4-up CGPDFService line at 20–50% CPU each that the old parallel design produced — likely because we now only have one owned mount alive at any given moment. So the *concurrent* mount-time worker pile-up is genuinely reduced. But post-script, ~12 mdworker_shared + ~5 CGPDFService still spawned within 1s of exit with mds_stores at 60% CPU; best read is that the macOS-owned auto-mount (which is still mounted because we don't touch it) is what they're scanning. Sequential mounting bounded what *we* contributed; it can't quiet what the OS auto-mount keeps stirring up.
-
-Why ship anyway: real reduction in concurrent worker count, simpler control flow, and the in-loop dedupe is a structural win regardless of Spotlight. Patch-version-only because the user-visible "CPU goes nuts when TM is plugged in" pain is still mostly there.
-
-## ~~Local APFS snapshots as a primary recovery source~~ (shipped v1.1.0, 2026-05-28)
-
-Shipped `--source=local|tm|both` (default `both`) in v1.1.0. With no TM drive plugged in, `find_tm_device()` now falls through silently and the script proceeds against local snapshots on `/System/Volumes/Data`. `find_data_root` handles the local-snapshot mountpoint layout (`<mp>/Users/...`, no `Data/` wrapper). Sequential mount loop merges both pools and sorts newest-first across the union; the `seen` dedupe still applies.
-
-Bonus discovery: **mounting a local-volume snapshot does NOT trigger Spotlight reindex** — verified zero new mdworker_shared/CGPDFService workers post-mount (vs ~12+5 from a TM-drive mount). Apparently the live Data volume's existing index already covers the snapshot's blocks via APFS COW. So the local-snapshot path is both drive-free *and* Spotlight-quiet, captured in NOTES.md.
-
-Reality check on coverage: Apple docs claim "hourly local snapshots, retained 24h," but that retention only kicks in if Time Machine runs automatically. Maintainer backs up manually and rarely — exactly one local snapshot exists on his machine, dated 2026-04-24, the date of his last manual backup. For users like him, local snapshots are "one extra recent safety net" rather than "rolling 24h coverage." Still useful — that snapshot caught everything he'd lost between then and the recovery work — just not the deep history.
-
-Also shipped alongside: `--list-only` flag for machine-readable preview, and the test harness (`verify_restore.py`) now uses it to pick test files from the intersection of (on-disk) ∩ (in-snapshot) and assert restored size + mtime match the snapshot's, not the live file's.
-
-## Quiet Spotlight on snapshot mounts (v1.2) — investigated 2026-06-01, **paused**
-
-**Status: paused, not abandoned.** Spent a session measuring with `tests/spotlight_harness.py` and confirmed the CPU pain on the TM-drive path is **outside our script's reach via the strategies we'd queued.** Not blocking the main Claude-restoration script's roadmap, but the harness + logs + parked question all stay around for a future session that wants to pick this back up — possibly as its own repo if the spotlight-tamer work outgrows this project's scope. Detailed findings in [NOTES.md](NOTES.md) ("Spotlight indexes the macOS-owned auto-mount..." entry) and the harness logs at [tests/logs/index.md](tests/logs/index.md). Summary:
-
-- Drive plugged + unlocked, *no script*: 11 CGPDFService at 195% CPU. The swarm starts before we run anything.
-- Our temp snapshot mount is invisible to Spotlight (`mdutil -s` says "unknown indexing state"). Strategies targeting our mountpoint don't address what's actually being scanned.
-- `mdutil -d /Volumes/<TM drive>` reaches the real off-state but **macOS auto-re-enables within the same syscall.** Re-enabler unidentified — `backupd` or a volume-mount hook are the leading suspects.
-
-The cheap strategies originally queued here (`.metadata_never_index`, `tmutil addexclusion`, mount flags) all target our temp mountpoint, so they share the "wrong path" problem. Not worth investigating further without a different attack vector.
-
-**Open question worth a future investigation session** (not blocking anything): identify what re-enables indexing after `mdutil -d`. Install Apple's developer Logging profile to disable `<private>` redaction in `log show --predicate 'subsystem == "com.apple.metadata"'`, then `sudo mdutil -d` the TM volume and grep the log for the re-enable. If we can name the daemon, we can decide whether disabling *it* is worth the user-visible cost.
-
-The only known way to fully prevent the swarm today is Spotlight Privacy plist injection at the *macOS auto-mount path* (not our temp mount). That's `/Library/Preferences/com.apple.spotlight.plist` modification, requires sudo, persists across mounts, modifies system-wide Spotlight config. Too invasive for the script to do silently. Could be documented in README as an "if you really want to" recipe for the deep-history users.
+**Open question for a future session** (not blocking): identify what re-enables indexing after `mdutil -d /Volumes/<TM drive>`. Install Apple's developer Logging profile to defeat `<private>` redaction in `log show --predicate 'subsystem == "com.apple.metadata"'`, run the disable, grep the log for the re-enable event. If we can name the daemon, we can decide whether the loud-but-honest plist-injection recipe (sudo, persists across mounts, system-wide) is worth documenting in README as an "if you really want to."
 
 ## Friendly Full Disk Access (FDA) error message
 
@@ -84,63 +58,16 @@ Then re-run. (Underlying error: <captured mount_apfs stderr>)
 
 Apply the same treatment in [tests/spotlight_harness.py](tests/spotlight_harness.py)'s mount call. Also worth a one-line note in README about needing FDA.
 
-## Claude Desktop session recovery
+## Claude Desktop session recovery — deferred work
 
-> **Status (2026-06-08): `restore_claude_desktop.py` `desktop-v0.1.0` shipped.** Mode A surgical edit works end-to-end on Claude Desktop 1.11187.4 (verified pre- and post-auto-update on the maintainer's machine). Mode A snapshot-restore fallback (v0.2.0) and Mode B JSONL restore (v0.3.0) remain deferred — see "Deferred work" subsection below. The rest of this section is preserved as the original investigation + design record.
+`restore_claude_desktop.py` `desktop-v0.1.0` shipped the Mode A surgical-edit path (verified on Claude Desktop 1.11187.4). The full failure-mode taxonomy, the `cliSessionId` mechanism, and the storage layout live in [NOTES.md](NOTES.md) → "Claude Desktop session recovery — failure-mode taxonomy." Two paths remain on the roadmap; both reuse snapshot logic from `restore_claude_code.py`.
 
-The Claude Desktop app has an embedded Claude Code area that lists past sessions in its UI, but clicking them often shows **"Session not found on disk"** — same disappearing-chat problem as Claude Code CLI, different storage location.
-
-Confirmed path: `~/Library/Application Support/Claude/claude-code-sessions/<group>/<project>/local_*.json` (verified 2026-05-27 — one group dir present on this machine with 11 `local_*.json` metadata entries).
-
-Storage layout (verified 2026-06-04 on macOS):
-- `~/Library/Application Support/Claude/claude-code-sessions/<acct-uuid>/<org-uuid>/local_*.json` — UI-layer metadata (one file per session). NOT transcript content.
-- `~/.claude/projects/<encoded-cwd>/<sessionId>.jsonl` — transcript content. Same location Claude Code CLI / VS Code use; shared store.
-- `~/.claude/projects/<encoded-cwd>/sessions-index.json` — Desktop's authoritative manifest of what JSONLs *should* exist in this project, with firstPrompt + messageCount + dates. Written by Desktop. Discovered 2026-06-04; not present on every project (only confirmed on `data-of-being` so far — investigate when y-l-p is opened in Desktop next).
-- `~/.claude/projects/<encoded-cwd>/<sessionId>/subagents/agent-*.jsonl` — subagent transcript fragments. Survive parent-JSONL deletion in at least some cases.
-
-Ruled out as out-of-scope for transcript recovery (verified 2026-06-04):
-- `~/Library/Application Support/Claude/claude-code/` — bundled CLI binary (`<version>/claude.app/`).
-- `~/Library/Application Support/Claude/claude-code-vm/` — bundled VM runtime.
-- `~/Library/Application Support/Claude/local-agent-mode-sessions/skills-plugin/` — extension config.
-
-`local-agent-mode-sessions/<acct>/<org>/` does hold Cowork (agent-mode) session content but that's a separate surface — out of scope for the first cut.
-
-### Investigation 2026-06-04 — failure modes + Mode A recipe proven
-
-See NOTES.md → "Claude Desktop session recovery — failure-mode taxonomy" for the full writeup. Summary:
-
-- **Mode A ("Session not found on disk" / "Message not found on disk") is a metadata-only failure, and the fix is one field.** Proven by hand 2026-06-04 on two `young-ladys-primer` sessions: adding `cliSessionId` (= JSONL filename UUID) to the broken `local_*.json` and removing `transcriptUnavailable` is sufficient. Desktop re-bloats the file with current-schema fields on next load but preserves `cliSessionId` and does not re-add `transcriptUnavailable`. So `transcriptUnavailable: true` is symptom, not cause — Desktop writes it when `cliSessionId` is missing at load time.
-- **Mode B ("No messages yet") is a full content loss.** For `data-of-being`, all 5 referenced JSONLs were missing from every available snapshot (oldest 2026-03-11). Content gone before the snapshot window opens — unrecoverable on this machine. For other users with longer snapshot history, this might still recover via the existing `restore_claude_code.py` flow against `~/.claude/projects/`.
-- **`sessions-index.json` is the linchpin for detection.** Authoritative manifest of what JSONLs *should* be in a project dir — so Mode B detection is "filenames in index, missing from disk," and Mode A is "JSONL on disk, metadata broken."
-
-### Design (post-investigation)
-
-**Strategy tier reversal vs. what we originally planned:** surgical edit is the *primary* path for Mode A; snapshot restore is the *fallback*. Most users will get a fix with no external drive required — meaningful for the publicity story.
-
-- **Mode A primary — surgical edit.** For each broken `local_*.json`: find the matching JSONL by `createdAt` ↔ first-record `timestamp` (sub-second match on this machine; refuse on ambiguity rather than guessing); write `cliSessionId = <JSONL UUID>`; remove `transcriptUnavailable`; leave every other field alone. No TM drive needed.
-- **Mode A fallback — snapshot restore.** Triggers when JSONL matching is ambiguous (multiple candidates within the createdAt window). Pull `local_*.json` from the newest TM/local snapshot where it has `cliSessionId` present. Sidesteps the match-ambiguity problem because the snapshot already names the right JSONL.
-- **Mode B — JSONL restore + Mode A repair.** Detect via `sessions-index.json` ↔ disk diff. Restore the missing JSONLs from snapshots (same logic as `restore_claude_code.py`). Then run the Mode A path on the metadata. If JSONLs aren't in any snapshot, surface "not recoverable, here's what `sessions-index.json` says was there" — don't fail silently.
-- **Preflight (both modes):** Refuse to mutate metadata while Claude Desktop is running. Verified 2026-06-04 — Desktop re-writes session files from in-memory state within seconds, clobbering edits and re-adding `transcriptUnavailable: true`. Detect a live `Claude.app/Contents/MacOS` process and tell the user to `Cmd-Q` Desktop first. Don't kill it ourselves.
-- **First code milestone: read-only diagnostic.** Print, per project, which mode each session is in and what the recommended fix would be. No mutation. Validates detection + matching against real state before we touch any files.
-
-This obsoletes BasedGPT's "synthesize metadata from scratch" approach for Mode A on the macOS side: we don't need to synthesize anything; Desktop's live metadata is fine except for one missing pointer. Reuse from his work shifts to JSONL-matching idioms and CLI structure, not the synth logic itself. Still credit the reference impl when the script lands.
-
-### Subtask: metadata synthesis after a Time Machine restore
-
-Raised by @BasedGPT on [#62272](https://github.com/anthropics/claude-code/issues/62272#issuecomment-4554894518) (and corroborated by @ShreeshaJay on [#48334](https://github.com/anthropics/claude-code/issues/48334)): JSONLs restored into `~/.claude/projects/` *without* a matching `local_*.json` entry in `claude-code-sessions/` get treated as orphans on the next cleanup pass and re-deleted. Originally observed on Windows; the path exists on macOS too, so the same risk almost certainly applies here.
-
-This means the current `restore_claude_code.py` flow has a gap: a successful restore can be silently undone on the next sweep if metadata isn't synthesised alongside the JSONLs. Fixing this is the natural bridge into the broader Desktop recovery work — same files, same machine, same investigation.
-
-Reference implementation: [`BasedGPT/claude-code-session-recovery` → `tools/sessions/synth_session_metadata.py`](https://github.com/BasedGPT/claude-code-session-recovery/blob/main/tools/sessions/synth_session_metadata.py). Windows-targeted; full metadata synthesis. Post-2026-06-04 investigation, our macOS Mode A path doesn't need to synthesize — the live broken file is fine except for one missing field — but his code is still the right reference for JSONL-matching idioms, CLI structure, and the orphan-cleanup risk this subtask is about. He gave permission to use it as the reference (and we gave him reciprocal permission on our largest-file + mtime-preservation code). Credit + link when this lands. I publicly committed to this being "next" in the [#62272 reply](https://github.com/anthropics/claude-code/issues/62272), so don't let it drift. Design notes pulled from his code are in [personal-notes.md](personal-notes.md) → "Desktop recovery — design notes from BasedGPT's reference impl".
-
-### Deferred work (post-v0.1.0)
-
-`desktop-v0.1.0` ships the Mode A surgical-edit path. Two paths remain on the roadmap; both reuse logic from `restore_claude_code.py` and would justify factoring out a shared snapshot-mounting module.
-
-- **v0.2.0 — Mode A snapshot fallback.** Triggers when the script's report shows NEEDS REVIEW (multiple transcript candidates within `--match-tolerance` of the metadata `createdAt`). Recipe: pull `local_*.json` from the newest TM or local snapshot where it has `cliSessionId` present, then copy over the live broken file using the existing `cp -p` + `chmod -N` + `chmod u+w` recipe from the main script. No NEEDS REVIEW cases on this machine, so this would be coded against a hypothetical — wait for a user report or build a test fixture deliberately.
-- **v0.3.0 — Mode B JSONL restore.** Triggers on LOST sessions. Diff `sessions-index.json` ↔ live `~/.claude/projects/<encoded>/` to enumerate missing JSONLs; restore them from snapshots using main-script logic; then run the Mode A path on the corresponding metadata. Users with snapshot coverage that reaches back far enough to actually catch the deletion are rare in practice (the maintainer's case had nothing recoverable past 2026-03-11). Defer until a user actually hits it; otherwise we're coding against the maintainer's failure shape only.
+- **v0.2.0 — Mode A snapshot fallback.** Triggers when the report shows NEEDS REVIEW (multiple transcript candidates within `--match-tolerance` of the metadata `createdAt`). Recipe: pull `local_*.json` from the newest TM or local snapshot where it has `cliSessionId` present, then copy over the live broken file using the `cp -p` + `chmod -N` + `chmod u+w` recipe from the main script. No NEEDS REVIEW cases on this machine — would be coded against a hypothetical, so wait for a user report or build a test fixture deliberately.
+- **v0.3.0 — Mode B JSONL restore.** Triggers on LOST sessions. Diff `sessions-index.json` ↔ live `~/.claude/projects/<encoded>/` to enumerate missing JSONLs; restore them from snapshots using main-script logic; then run the Mode A path on the corresponding metadata. Users with snapshot coverage reaching back far enough to catch the deletion are rare (maintainer's case had nothing past 2026-03-11). Defer until a user actually hits it.
 
 When v0.2 lands, factor `Snapshot`, `mount_snapshot`, `unmount_if_ours`, `find_data_root`, and the encoded-project-name pre-rewrite into a `snapshots.py` module both scripts import. Don't do this pre-emptively per CLAUDE.md.
+
+**Credit obligation when this lands:** [`BasedGPT/claude-code-session-recovery`](https://github.com/BasedGPT/claude-code-session-recovery/blob/main/tools/sessions/synth_session_metadata.py) is the reference impl for JSONL-matching idioms and CLI structure (his synth-from-scratch approach isn't needed — our Mode A only restores one missing field). He gave permission to use it; we gave reciprocal permission on our largest-file + mtime code. Credit + link when v0.2/v0.3 ship. Design notes in [personal-notes.md](personal-notes.md) → "Desktop recovery — design notes from BasedGPT's reference impl". The orphan-cleanup risk he raised on [#62272](https://github.com/anthropics/claude-code/issues/62272#issuecomment-4554894518) (restored JSONLs without matching metadata get re-deleted on the next sweep) is the reason Mode B repairs metadata alongside the transcript, not just the transcript.
 
 ## Stretch: user-hosted Claude chat backups
 
