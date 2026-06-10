@@ -9,11 +9,9 @@ Either tool is useful on its own. The Desktop tool's primary repair path needs o
 
 ## Background
 
-Claude Code stores chat transcripts as JSONL files under `~/.claude/projects/<encoded-cwd>/`. A cleanup job prunes them after `cleanupPeriodDays` (default: **30 days**, undocumented, no warning). If you haven't changed that setting, you've probably already lost months of conversations.
+**Deleted transcripts.** Claude Code stores chat transcripts as JSONL files under `~/.claude/projects/<encoded-cwd>/`. A cleanup job prunes them after `cleanupPeriodDays` (default: **30 days**, undocumented, no warning). If you haven't changed that setting, you've probably already lost months of conversations.
 
-If you have a macOS Time Machine drive — or if you have local APFS snapshots on your internal disk (typically present even when the drive is unplugged, as long as you've run Time Machine recently) — [`restore_claude_code.py`](restore_claude_code.py) can get them back.
-
-Separately, Claude Desktop has its own failure mode: the UI says "Session not found on disk" for a transcript that's literally still on disk. This happens because Desktop's per-session metadata files (`~/Library/Application Support/Claude/claude-code-sessions/.../local_*.json`) lose the `cliSessionId` field that links the metadata to the transcript. [`restore_claude_desktop.py`](restore_claude_desktop.py) fixes that link.
+**Desktop's "Session not found on disk."** A separate failure: Desktop's per-session metadata files (`~/Library/Application Support/Claude/claude-code-sessions/.../local_*.json`) lose the `cliSessionId` field that links metadata to transcript, so the UI can't find a transcript that's still on disk.
 
 ## Prevention first
 
