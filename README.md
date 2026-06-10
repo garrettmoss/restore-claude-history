@@ -2,7 +2,7 @@
 
 Two small macOS tools for recovering Claude chats:
 
-- **[`restore_claude_history.py`](restore_claude_history.py)** — your transcripts were deleted from `~/.claude/projects/`. Pulls them back from Time Machine or local APFS snapshots.
+- **[`restore_claude_code.py`](restore_claude_code.py)** — your transcripts were deleted from `~/.claude/projects/`. Pulls them back from Time Machine or local APFS snapshots.
 - **[`restore_claude_desktop.py`](restore_claude_desktop.py)** — Claude Desktop's UI shows **"Session not found on disk"** for sessions whose transcript is still there. Repairs the broken metadata link, no external drive required.
 
 Either tool is useful on its own. The Desktop tool's primary repair path needs only local files; the history tool needs a Time Machine drive *or* local snapshots.
@@ -11,7 +11,7 @@ Either tool is useful on its own. The Desktop tool's primary repair path needs o
 
 Claude Code stores chat transcripts as JSONL files under `~/.claude/projects/<encoded-cwd>/`. A cleanup job prunes them after `cleanupPeriodDays` (default: **30 days**, undocumented, no warning). If you haven't changed that setting, you've probably already lost months of conversations.
 
-If you have a macOS Time Machine drive — or if you have local APFS snapshots on your internal disk (typically present even when the drive is unplugged, as long as you've run Time Machine recently) — [`restore_claude_history.py`](restore_claude_history.py) can get them back.
+If you have a macOS Time Machine drive — or if you have local APFS snapshots on your internal disk (typically present even when the drive is unplugged, as long as you've run Time Machine recently) — [`restore_claude_code.py`](restore_claude_code.py) can get them back.
 
 Separately, Claude Desktop has its own failure mode: the UI says "Session not found on disk" for a transcript that's literally still on disk. This happens because Desktop's per-session metadata files (`~/Library/Application Support/Claude/claude-code-sessions/.../local_*.json`) lose the `cliSessionId` field that links the metadata to the transcript. [`restore_claude_desktop.py`](restore_claude_desktop.py) fixes that link.
 
@@ -29,7 +29,7 @@ That's ~100 years. There's no documented upper bound; the schema just wants a po
 
 ## Recovery
 
-This script: [`restore_claude_history.py`](restore_claude_history.py)
+This script: [`restore_claude_code.py`](restore_claude_code.py)
 
 ### Requirements
 
@@ -48,10 +48,10 @@ cd restore-claude-history
 
 # See what would be restored, no changes made. Uses whichever sources
 # are available — TM drive (if plugged in) and local snapshots:
-python3 restore_claude_history.py --dry-run --verbose
+python3 restore_claude_code.py --dry-run --verbose
 
 # Actually restore:
-python3 restore_claude_history.py
+python3 restore_claude_code.py
 ```
 
 > If your TM drive is unplugged, the script will fall through to local snapshots automatically. Local snapshots only cover ~24h to whenever you last ran a Time Machine backup, so they're a recent-deletion safety net, not a deep archive — plug the drive in if you need older chats.
@@ -132,7 +132,7 @@ Then launch Claude Desktop to verify — repaired sessions should load normally.
 
 - **OK** — the session loads correctly in Claude Desktop. No action needed.
 - **FIXABLE** — metadata is broken but the transcript is still on disk. This is what the script repairs: it writes the missing `cliSessionId` field pointing to the matching transcript, then removes the `transcriptUnavailable` flag. Every other field is left untouched.
-- **LOST** — metadata is broken AND no transcript is on disk for it. The script can't help here directly; you'd need a Time Machine (or other snapshot) backup that reaches back to before the transcript was deleted. [`restore_claude_history.py`](restore_claude_history.py) handles that side.
+- **LOST** — metadata is broken AND no transcript is on disk for it. The script can't help here directly; you'd need a Time Machine (or other snapshot) backup that reaches back to before the transcript was deleted. [`restore_claude_code.py`](restore_claude_code.py) handles that side.
 - **NEEDS REVIEW** — metadata is broken and multiple transcripts on disk start within seconds of when the session was created, so the script can't tell which one belongs. Skipped rather than guessed. A future version will fall back to restoring metadata from a Time Machine snapshot for these.
 
 ### Flags

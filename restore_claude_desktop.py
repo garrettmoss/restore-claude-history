@@ -375,7 +375,7 @@ MODE_CALLOUT: dict[str, str] = {
         "LOST sessions have no transcript on disk under ~/.claude/projects/.\n"
         "  Recovery is possible only if you have a Time Machine (or other\n"
         "  snapshot) backup that reaches back to before the deletion. See\n"
-        "  restore_claude_history.py — this script doesn't restore transcript\n"
+        "  restore_claude_code.py — this script doesn't restore transcript\n"
         "  content yet."
     ),
     "NEEDS REVIEW": (
@@ -499,7 +499,7 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     # Pre-rewrite `--project FOO` → `--project=FOO` so argparse doesn't reject
-    # encoded names that start with '-'. Same pattern as restore_claude_history.py.
+    # encoded names that start with '-'. Same pattern as restore_claude_code.py.
     argv = sys.argv[1:]
     rewritten: list[str] = []
     i = 0

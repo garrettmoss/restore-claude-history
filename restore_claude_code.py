@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-restore_claude_history.py
+restore_claude_code.py
 
 Recover deleted Claude Code chat transcripts (~/.claude/projects/<project>/*.jsonl)
 from macOS Time Machine APFS snapshots.

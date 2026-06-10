@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-verify_restore.py — end-to-end test for restore_claude_history.py
+verify_restore.py — end-to-end test for restore_claude_code.py
 
 Builds a sandbox from your real ~/.claude/projects/<project>, deletes a few
 files from the sandbox, runs the main script with --dest, then checks that
@@ -28,7 +28,7 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-MAIN_SCRIPT = REPO_ROOT / "restore_claude_history.py"
+MAIN_SCRIPT = REPO_ROOT / "restore_claude_code.py"
 CLAUDE_DIR = Path.home() / ".claude" / "projects"
 NUM_FILES_TO_TEST = 5
 
