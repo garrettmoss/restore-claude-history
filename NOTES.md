@@ -191,7 +191,10 @@ Many affected users, but the threads are broader than just `cleanupPeriodDays`, 
 - [ ] [#61952 — ~20 sessions lost, only 11 survived - 2 months of work I paid for - gone](https://github.com/anthropics/claude-code/issues/61952)
 - [ ] [#61038 — Old chats wiped, no session summary](https://github.com/anthropics/claude-code/issues/61038)
 - [ ] [#49903 — Claude Code transcripts loss](https://github.com/anthropics/claude-code/issues/49903)
-- [ ] [#61608 — Sessions not saved to disk — "Session not found on disk" on reopen](https://github.com/anthropics/claude-code/issues/61608) — has the exact UI string from the Desktop failure mode in TODO step 2.
+- [x] [#60984 — Regression in 2.1.144/2.1.145: conversation JSONL files only save ai-title, no message content written to disk](https://github.com/anthropics/claude-code/issues/60984) — `has repro`, `regression`, active. *Posted 2026-06-11, replying to @chuqk's 2026-06-09 macOS repro; scoped to written-then-deleted, distinguished from the never-persisted write bug.*
+- [ ] [#53717 — Windows: sessions in sidebar but all message content missing after auto-update](https://github.com/anthropics/claude-code/issues/53717) — canonical now (absorbed #61608, #60984's neighbor). Windows-titled but has a macOS sufferer (@1nwooozip) in-thread; lead with that angle. **Next up.**
+
+(Removed #61608 — auto-closed 2026-05-26 as a duplicate of #53717; the bot consolidated the thread.)
 
 ### For the Desktop follow-up (later)
 
