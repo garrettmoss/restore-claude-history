@@ -159,7 +159,7 @@ This tool covers exactly one slice of the disappearing-Claude-chats problem: mac
 - **[DeveloperAlly/claude-code-survival-toolkit](https://github.com/DeveloperAlly/claude-code-survival-toolkit)** — broader in-app survival kit for the VS Code extension: 9 fix scripts (sidebar dropped sessions, scrambled titles, scrambled sort order, vscode `state.vscdb` snapshot/restore) plus 7 governance hooks. macOS bash; use this if your data is on disk but the extension's sidebar is broken or scrambled.
 
 **Linux:**
-- **[cnighswonger/restore-claude-history-linux](https://github.com/cnighswonger/restore-claude-history-linux)** — Linux port of this tool. ZFS support shipped; Btrfs and Timeshift planned.
+- **[vsits/restore-claude-history-linux](https://github.com/vsits/restore-claude-history-linux)** — Linux port of this tool. ZFS, Btrfs, and Timeshift all shipped (v1.1.0); real-kernel e2e validation on each. Recovery logic stays in lockstep with this repo via an upstream-sync workflow.
 
 **Windows:**
 - **[BasedGPT/claude-code-session-recovery](https://github.com/BasedGPT/claude-code-session-recovery)** — Windows-specific Claude Desktop metadata repair (orphan JSONLs, junction slug mismatches, missing groupings).
