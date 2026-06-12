@@ -10,7 +10,7 @@ Suggested order (lowest cost / highest signal first):
 
 - [x] **1. Fill in `NOTES.md` → "Related GitHub issues" section.** Searched `anthropics/claude-code` for `cleanupPeriodDays`, `history deleted`, `lost chats`, `session not found`, `transcript missing`. Captured 16 threads grouped by priority in NOTES.md. *Done 2026-05-24.*
 
-- [ ] **2. Comment on each of those issues.** 🟡 *In progress: 6 of ~16 posted (#59248, #41458, #26452, #9258, #62272 body + replies by 2026-05-27; #60984 on 2026-06-11). Next up: #53717 (canonical "content missing after update" thread; has a macOS sufferer despite the Windows title). With `desktop-v0.1.0` shipped, the Desktop-failure-mode threads (#48334 / #38691 / #51412 / #59736) are now in scope too. See NOTES.md checklist for the full ordered list.* Short, helpful, not spammy. Example:
+- [ ] **2. Comment on each of those issues.** 🟡 *In progress: 7 of ~16 posted (#59248, #41458, #26452, #9258, #62272 body + replies by 2026-05-27; #60984 on 2026-06-11; #53717 on 2026-06-12 — replied to the macOS sufferer @1nwooozip, not the Windows OP whose 1KB-stub case is genuine never-persisted loss). Next up: the Desktop-failure-mode threads now in scope with `desktop-v0.1.0` shipped (#48334 / #38691 / #51412 / #59736). See NOTES.md checklist for the full ordered list.* Short, helpful, not spammy. Example:
 
    > Had this happen and built a recovery tool for it (macOS + Time Machine only): https://github.com/garrettmoss/restore-claude-history
 
