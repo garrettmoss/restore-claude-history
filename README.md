@@ -91,6 +91,11 @@ This script: [`restore_claude_desktop.py`](restore_claude_desktop.py)
 
 Repairs Claude Desktop session metadata so the UI stops showing **"Session not found on disk"** for transcripts that are still on disk under `~/.claude/projects/`. No Time Machine drive needed — the primary repair path is a single-field edit to a local metadata file.
 
+> [!WARNING]
+> **Do not send a message in a broken session before repairing it.**
+> When you open a session that shows "Session not found on disk" (or "No messages yet") and send a message, Desktop binds a *new* `cliSessionId` to that session card and starts a fresh, empty transcript. The card then looks "fixed" — but the link to your original conversation is gone, and the new pointer might prevent this script (or a later Time Machine restore via [`restore_claude_code.py`](restore_claude_code.py)) from reconnecting the old transcript. Leave broken sessions untouched until you've run the repair.
+> Thanks to [@1nwooozip on issue #53717](https://github.com/anthropics/claude-code/issues/53717#issuecomment-4505032582) for documenting this footgun.
+
 ### Requirements
 
 - macOS with Claude Desktop installed.
