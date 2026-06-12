@@ -163,48 +163,30 @@ Open threads in `anthropics/claude-code` where users are hitting the disappearin
 
 **My own filed issue:** [#62272 — Chat JSONLs deleted from `~/.claude/projects/` despite `cleanupPeriodDays` set high — appears triggered by updates/restarts](https://github.com/anthropics/claude-code/issues/62272). Filed 2026-05-25.
 
-### Start here (highest-signal, lowest spam risk)
+### To do — open, unposted
 
-In order — comment on one, wait a few days, then the next. Tailor each comment; don't paste verbatim.
+Plausibly macOS-relevant. Check each for an actual macOS sufferer in-thread before drafting; if it's all-Windows, skip (BasedGPT's Windows toolkit serves those) and note it here. Tailor each comment to the thread — don't paste verbatim.
 
-- [x] **[#59248 — Silent retention cleanup deletes session transcripts with no warning, opt-in, or recovery](https://github.com/anthropics/claude-code/issues/59248)** — the bug as described in the title *is* what this tool addresses. A recovery link is squarely on-topic, not spam. Best first comment. *Posted 2026-05-24.*
-- [x] **[#41458 — `cleanupPeriodDays: 99999` ignored — 490 sessions silently deleted despite explicit setting](https://github.com/anthropics/claude-code/issues/41458)** — 10 comments, active, and the most-affected users (who set the flag and *still* lost data) are exactly the people who need recovery. Also the evidence that prevention alone isn't enough. *Posted 2026-05-25.*
-
-If those land well (replies, thumbs-up, repo traffic in GitHub Insights), expand to the next tier. If they get ignored or pushback, stop and rethink the message before posting more.
-
-### Next tier — high-traffic general threads
-
-Many affected users, but the threads are broader than just `cleanupPeriodDays`, so the comment needs more framing ("if your JSONLs were deleted from disk on macOS, this can get them back; doesn't help if X").
-
-- [x] [#26452 — Session Disappeared After Logout / Restart of Claude Code Desktop - HOW to restore the sessions ASAP???](https://github.com/anthropics/claude-code/issues/26452) — 45 comments, very active. *Posted 2026-05-25, anchored to @BasedGPT's bucket-3 decision tree.*
-- [x] [#9258 — History Sessions lost in Vscode plugin](https://github.com/anthropics/claude-code/issues/9258) — 44 comments. *Posted 2026-05-25, replying to @DeveloperAlly's root-cause-#5 anchor.*
-- [ ] [#38055 — Cowork: Minor version update permanently deletes chat history and scheduled tasks](https://github.com/anthropics/claude-code/issues/38055) — 18 comments.
-- [ ] [#12908 — Conversation History disappeared after update](https://github.com/anthropics/claude-code/issues/12908) — 13 comments.
-
-### Also relevant — core cleanup bug, smaller threads
-
+- [ ] [#12908 — Conversation History disappeared after update](https://github.com/anthropics/claude-code/issues/12908)
 - [ ] [#46621 — Critical: Claude Code silently deletes conversation history without user consent](https://github.com/anthropics/claude-code/issues/46621)
 - [ ] [#46175 — Feature Request: Notify users before auto-deleting conversation history](https://github.com/anthropics/claude-code/issues/46175)
-- [ ] [#60368 — Background-fleet `deleteJob` silently unlinks main session JSONL despite `cleanupPeriodDays: 36500`](https://github.com/anthropics/claude-code/issues/60368) — another path that bypasses the setting.
 - [ ] [#16970 — claude is losing chat history](https://github.com/anthropics/claude-code/issues/16970)
-- [ ] [#54092 — Local CLI conversations silently disappear from disk — multiple chats lost, JSONL files gone](https://github.com/anthropics/claude-code/issues/54092)
 - [ ] [#61952 — ~20 sessions lost, only 11 survived - 2 months of work I paid for - gone](https://github.com/anthropics/claude-code/issues/61952)
 - [ ] [#61038 — Old chats wiped, no session summary](https://github.com/anthropics/claude-code/issues/61038)
-- [ ] [#49903 — Claude Code transcripts loss](https://github.com/anthropics/claude-code/issues/49903)
-- [x] [#60984 — Regression in 2.1.144/2.1.145: conversation JSONL files only save ai-title, no message content written to disk](https://github.com/anthropics/claude-code/issues/60984) — `has repro`, `regression`, active. *Posted 2026-06-11, replying to @chuqk's 2026-06-09 macOS repro; scoped to written-then-deleted, distinguished from the never-persisted write bug.*
-- [x] [#53717 — Windows: sessions in sidebar but all message content missing after auto-update](https://github.com/anthropics/claude-code/issues/53717) — canonical now (absorbed #61608, #60984's neighbor). Windows-titled but has a macOS sufferer (@1nwooozip) in-thread. *Posted 2026-06-12, replying to @1nwooozip's macOS comment (the OP's 1KB-stub case is genuine never-persisted loss, out of scope for us). Two-script pipeline + amplified his "don't send a message in a broken session" footgun.*
 
-(Removed #61608 — auto-closed 2026-05-26 as a duplicate of #53717; the bot consolidated the thread.)
+### Posted
 
-### For the Desktop follow-up (later)
+- [x] [#59248 — Silent retention cleanup deletes session transcripts with no warning, opt-in, or recovery](https://github.com/anthropics/claude-code/issues/59248). *Posted 2026-05-24 — the title bug is exactly what this tool addresses; recovery link squarely on-topic.*
+- [x] [#41458 — `cleanupPeriodDays: 99999` ignored — 490 sessions silently deleted despite explicit setting](https://github.com/anthropics/claude-code/issues/41458). *Posted 2026-05-25 — users who set the flag and still lost data; the evidence that prevention alone isn't enough.*
+- [x] [#26452 — Session Disappeared After Logout / Restart of Claude Code Desktop](https://github.com/anthropics/claude-code/issues/26452). *Posted 2026-05-25, anchored to @BasedGPT's bucket-3 decision tree.*
+- [x] [#9258 — History Sessions lost in Vscode plugin](https://github.com/anthropics/claude-code/issues/9258). *Posted 2026-05-25, replying to @DeveloperAlly's root-cause-#5 anchor.*
+- [x] [#60984 — Regression in 2.1.144/2.1.145: conversation JSONL files only save ai-title, no message content written to disk](https://github.com/anthropics/claude-code/issues/60984). *Posted 2026-06-11, replying to @chuqk's 2026-06-09 macOS repro; scoped to written-then-deleted, distinguished from the never-persisted write bug.*
+- [x] [#53717 — Windows: sessions in sidebar but all message content missing after auto-update](https://github.com/anthropics/claude-code/issues/53717). *Posted 2026-06-12, replying to @1nwooozip's macOS comment (the OP's 1KB-stub case is genuine never-persisted loss, out of scope for us). Two-script pipeline + amplified his "don't send a message in a broken session" footgun.*
+- [x] [#48334 — Desktop app update deletes session history (`sessions-index.json` + `.jsonl` files)](https://github.com/anthropics/claude-code/issues/48334). *Posted 2026-06-12: general note for future macOS readers (not pitched at @rpranjan11, whose case is confirmed unrecoverable — JSONLs deleted, no backup). Framed as the macOS transcript-restore half complementing @BasedGPT's Windows metadata toolkit.*
 
-Not for the current script — relevant when the Claude Desktop recovery work in TODO kicks off.
+### Desktop-specific — worth a fresh search
 
-- [ ] [#48334 — Desktop app update deletes session history (`sessions-index.json` + `.jsonl` files)](https://github.com/anthropics/claude-code/issues/48334)
-- [ ] [#38691 — All sessions lost after Claude Desktop update on Windows (data intact on disk)](https://github.com/anthropics/claude-code/issues/38691)
-- [ ] [#51412 — Desktop App 2.1.111 upgrade: Code session index wiped (recoverable via workaround); Cowork history disappeared](https://github.com/anthropics/claude-code/issues/51412)
-- [ ] [#59736 — Desktop 3p Code sessions disappear from UI after restart while JSONL transcripts remain on disk](https://github.com/anthropics/claude-code/issues/59736)
-- [ ] [#55418 — Code Desktop sessions display in sidebar but content is permanently inaccessible — audit.jsonl never recoverable, `sessiondata.img` is encrypted "shdw" container](https://github.com/anthropics/claude-code/issues/55418) — sobering: some Desktop data may be unrecoverable even with snapshots.
+Desktop session-loss reports are a growing share of the tracker, and they're often the recoverable macOS metadata case `restore_claude_desktop.py` handles. Re-search the tracker periodically for new Desktop threads with a macOS sufferer; add them to the To-do queue above.
 
 ## Origin
 

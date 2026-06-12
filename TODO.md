@@ -10,7 +10,7 @@ Suggested order (lowest cost / highest signal first):
 
 - [x] **1. Fill in `NOTES.md` → "Related GitHub issues" section.** Searched `anthropics/claude-code` for `cleanupPeriodDays`, `history deleted`, `lost chats`, `session not found`, `transcript missing`. Captured 16 threads grouped by priority in NOTES.md. *Done 2026-05-24.*
 
-- [ ] **2. Comment on each of those issues.** 🟡 *In progress: 7 of ~16 posted (#59248, #41458, #26452, #9258, #62272 body + replies by 2026-05-27; #60984 on 2026-06-11; #53717 on 2026-06-12 — replied to the macOS sufferer @1nwooozip, not the Windows OP whose 1KB-stub case is genuine never-persisted loss). Next up: the Desktop-failure-mode threads now in scope with `desktop-v0.1.0` shipped (#48334 / #38691 / #51412 / #59736). See NOTES.md checklist for the full ordered list.* Short, helpful, not spammy. Example:
+- [ ] **2. Comment on each of those issues.** 🟡 *In progress: 7 posted (#59248, #41458, #26452, #9258, #60984, #53717, #48334) plus #62272 filed. Remaining queue lives in NOTES.md → "Related GitHub issues" → "To do" (6 open threads); the list was pruned 2026-06-12 down to live macOS-relevant ones — closed/dead/all-Windows threads removed. Check each remaining thread for an actual macOS sufferer before drafting.* Short, helpful, not spammy. Example:
 
    > Had this happen and built a recovery tool for it (macOS + Time Machine only): https://github.com/garrettmoss/restore-claude-history
 
