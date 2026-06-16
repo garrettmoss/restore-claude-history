@@ -156,11 +156,26 @@ def mount_snapshot(snap: Snapshot, tmp_root: Path) -> bool:
     try:
         run(["mount_apfs", "-s", snap.name, f"/dev/{snap.device}", str(mp)])
     except subprocess.CalledProcessError as e:
-        print(f"  warn: failed to mount {snap.name}: {e.stderr.strip()}", file=sys.stderr)
+        stderr = e.stderr.strip()
         try:
             mp.rmdir()
         except OSError:
             pass
+        low = stderr.lower()
+        # mount_apfs emits "Operation not permitted" (EPERM) without FDA — the
+        # word "permission" never appears, so match the EPERM text too.
+        if "not permitted" in low or "permission" in low:
+            # No Full Disk Access — every snapshot mount will fail the same
+            # way, so this is fatal, not a per-snapshot skip.
+            die(
+                "Could not mount your Time Machine backup snapshot.\n\n"
+                "This usually means the terminal running this script doesn't have\n"
+                "Full Disk Access (FDA). Grant FDA to whatever terminal you are\n"
+                "running this from (Terminal.app, iTerm, VS Code, Cursor, etc.):\n\n"
+                "  System Settings → Privacy & Security → Full Disk Access → toggle on\n\n"
+                f"Then re-run. (Underlying error: {stderr})"
+            )
+        print(f"  warn: failed to mount {snap.name}: {stderr}", file=sys.stderr)
         return False
     snap.mountpoint = mp
     snap.owned_by_us = True

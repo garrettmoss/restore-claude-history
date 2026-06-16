@@ -221,7 +221,19 @@ def main() -> int:
         print(f"# mount: {' '.join(mount_cmd)}", file=sys.stderr, flush=True)
         r = subprocess.run(mount_cmd, capture_output=True, text=True)
         if r.returncode != 0:
-            print(f"# mount FAILED rc={r.returncode} stderr={r.stderr.strip()!r}", file=sys.stderr)
+            low = r.stderr.lower()
+            # mount_apfs emits "Operation not permitted" (EPERM) without FDA.
+            if "not permitted" in low or "permission" in low:
+                print(
+                    "# mount FAILED — likely no Full Disk Access (FDA). Grant FDA to\n"
+                    "# whatever terminal you are running this from (Terminal.app, iTerm,\n"
+                    "# VS Code, Cursor, etc.): System Settings → Privacy & Security →\n"
+                    "# Full Disk Access → toggle on, then re-run.\n"
+                    f"# (Underlying error: {r.stderr.strip()})",
+                    file=sys.stderr,
+                )
+            else:
+                print(f"# mount FAILED rc={r.returncode} stderr={r.stderr.strip()!r}", file=sys.stderr)
             return 2
 
         t_mount = time.monotonic()

@@ -36,6 +36,7 @@ This script: [`restore_claude_code.py`](restore_claude_code.py)
   - Local APFS snapshots on your internal disk (run `tmutil listlocalsnapshots /System/Volumes/Data` to check). These are typically present whenever Time Machine has run recently, even if the drive is currently unplugged.
 - **Full Disk Access** for whatever app runs the script (Terminal, iTerm, VS Code)
   - System Settings → Privacy & Security → Full Disk Access → +
+  - Without it, mounting the backup snapshot fails with `Operation not permitted`; the script will tell you to grant FDA and re-run.
 - Python 3.7+ (the system `python3` from Apple's Command Line Tools is fine)
 
 ### Quickstart

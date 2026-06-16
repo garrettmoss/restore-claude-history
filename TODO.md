@@ -36,27 +36,11 @@ Tip: track which channels actually drove traffic (GitHub repo Insights → Traff
 
 **Open question for a future session** (not blocking): identify what re-enables indexing after `mdutil -d /Volumes/<TM drive>`. Install Apple's developer Logging profile to defeat `<private>` redaction in `log show --predicate 'subsystem == "com.apple.metadata"'`, run the disable, grep the log for the re-enable event. If we can name the daemon, we can decide whether the loud-but-honest plist-injection recipe (sudo, persists across mounts, system-wide) is worth documenting in README as an "if you really want to."
 
-## Friendly Full Disk Access (FDA) error message
+## Friendly Full Disk Access (FDA) error message — done 2026-06-16
 
-Today, if the terminal running [restore_claude_code.py](restore_claude_code.py) doesn't have Full Disk Access, `mount_apfs` fails with a cryptic `Operation not permitted` and the script keeps going (it's caught as a warn-and-skip in `mount_snapshot`). User sees the raw macOS error and no guidance.
+When `mount_apfs` fails without FDA, [restore_claude_code.py](restore_claude_code.py)'s `mount_snapshot` now prints clear guidance and exits via `die()` (fatal — every snapshot mount fails the same way). Same treatment in [tests/spotlight_harness.py](tests/spotlight_harness.py); README documents the symptom→fix.
 
-Fix: in `mount_snapshot`, when `mount_apfs` fails and stderr contains `permission` (case-insensitive), print a clearer message before the existing warn and exit. Don't add a separate preflight check — `com.apple.TCC` probing adds a new failure mode unrelated to what we actually care about, and the real `mount_apfs` call is the only place this matters.
-
-Suggested wording (keep `(Underlying error: ...)` so unrelated mount failures — typo'd snapshot name, missing device — still surface):
-
-```
-ERROR: Could not mount your Time Machine backup snapshot.
-
-This usually means the terminal running this script doesn't have
-Full Disk Access (FDA). Grant FDA to whatever terminal you are
-running this from (Terminal.app, iTerm, VS Code, Cursor, etc.):
-
-  System Settings → Privacy & Security → Full Disk Access → toggle on
-
-Then re-run. (Underlying error: <captured mount_apfs stderr>)
-```
-
-Apply the same treatment in [tests/spotlight_harness.py](tests/spotlight_harness.py)'s mount call. Also worth a one-line note in README about needing FDA.
+**Gotcha for the record:** `mount_apfs` without FDA emits `Operation not permitted` (EPERM) — the word "permission" never appears. The original spec's substring check (`"permission" in stderr`) would have missed it. Predicate is `"not permitted" in low or "permission" in low`. Unrelated mount failures (bad device, typo'd snapshot) still fall through to the existing warn-and-skip.
 
 ## Claude Desktop session recovery — deferred work
 
