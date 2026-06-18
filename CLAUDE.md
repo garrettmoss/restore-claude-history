@@ -37,7 +37,7 @@ Each script is on its own version clock. Each script's in-file `__version__` con
 
 ### `restore_claude_desktop.py`
 
-- **`cliSessionId` is the single load-bearing field.** Mode A repair is "add `cliSessionId` matching the JSONL UUID, remove `transcriptUnavailable`, leave every other field alone." Don't expand the edit surface — Desktop re-writes the file on next load and the only thing it actually needs from us is that one field. See NOTES.md "Claude Desktop session recovery — failure-mode taxonomy."
+- **`cliSessionId` is the single load-bearing field.** Mode A repair is "add `cliSessionId` matching the JSONL UUID, remove `transcriptUnavailable`, leave every other field alone." Don't expand the edit surface — Desktop re-writes the file on next load and the only thing it actually needs from us is that one field. See NOTES.md "Claude Desktop: session-recovery failure-mode taxonomy."
 - **Desktop must be fully quit before editing.** The script refuses to run while `Claude.app/Contents/MacOS` is alive — Desktop rewrites session files from in-memory state within seconds and will clobber any edits. Don't false-positive on the `chrome-native-host` helper; it's a separate process and doesn't touch session files.
 - **`VERIFIED_CLAUDE_DESKTOP_VERSION` is a compatibility footprint, not a ceiling.** Bump it (and re-verify end-to-end) when running against a newer Desktop release. If a future Desktop version breaks the recipe, the constant is the last known-working bisection target.
 - **JSONL matching must refuse on ambiguity.** When two JSONLs fall inside the createdAt tolerance window, mark the session NEEDS REVIEW and don't guess. The snapshot-restore fallback (v0.2.0+) is the right answer for those cases.
