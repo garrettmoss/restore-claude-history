@@ -8,13 +8,16 @@ A small toolkit of standalone Python scripts for recovering Claude chat data on 
 
 - **`restore_claude_code.py`** — recover deleted Claude Code JSONL transcripts (`~/.claude/projects/<project>/*.jsonl`) from Time Machine and/or local APFS snapshots. (Renamed from `restore_claude_history.py` to make the Code-vs-Desktop axis explicit; the repo name stays `restore-claude-history`.)
 - **`restore_claude_desktop.py`** — repair Claude Desktop session metadata when the UI shows "Session not found on disk" for transcripts that are still on disk. v1 handles Mode A (surgical edit of `local_*.json`); Mode A snapshot-restore fallback and Mode B (JSONL restore) are deferred. See NOTES.md for the failure-mode taxonomy.
+- **`backup_claude_history.py`** — *planned, not built.* Forward backup of `~/.claude/projects/` (a `SessionStart` hook) plus restore-from-your-own-backups, so recovery stops depending on Time Machine. Architecture locked; see TODO.md (roadmap) and NOTES.md (rationale).
 
 Docs are deliberately split:
 - **README.md** — user-facing: what it does, how to run it.
-- **NOTES.md** — design rationale, hand-verified recovery steps, gotchas, related GitHub issues.
+- **NOTES.md** — design rationale, hand-verified recovery steps, gotchas, Claude Desktop failure-mode taxonomy.
 - **TODO.md** — open work, publicity plan, follow-up projects.
 
-When you change behavior, update the relevant doc — usually NOTES.md (for new gotchas) or README.md (for user-visible changes). Don't create new top-level docs without checking; the three above are intended to be the full set.
+(Two more docs are gitignored local scratch: `handoff.md` for live session state, `personal-notes.md` for GitHub drafts / prior-art / the publicity tracker.)
+
+When you change behavior, update the relevant doc — usually NOTES.md (for new gotchas) or README.md (for user-visible changes). Don't create new top-level docs without checking; the set above is intended to be complete.
 
 ## Versioning
 
@@ -33,7 +36,7 @@ Each script is on its own version clock. Each script's in-file `__version__` con
 - **mtime preservation is load-bearing.** The script preserves the snapshot's original mtime on restored files. Do NOT rewrite mtimes to in-file message timestamps — that triggers the very cleanup bug we're working around. See the @ojura/#59248 gotcha in NOTES.md.
 - **Encoded project names start with `-`.** Argparse rejects them as flags. The script pre-rewrites `--project FOO` → `--project=FOO`. Don't undo this. (Same gotcha applies to `restore_claude_desktop.py`.)
 - **Don't touch macOS auto-mounted snapshots.** The script distinguishes between snapshots it mounted (cleanup unmounts them) and pre-existing macOS auto-mounts (left alone). The `owned_by_us` flag on the `Snapshot` dataclass exists for exactly this reason.
-- **Time Machine drive must be plugged in for any non-trivial test.** Without it, the script exits early at `find_tm_volume()`. Spotlight indexes mounted TM volumes aggressively; keep test runs short and unplug when done.
+- **The TM drive is optional — `--source local` tests without it.** A missing TM drive only hard-exits under explicit `--source=tm`; the default `both` (and `local`) fall through to internal-disk APFS snapshots. Use `--source=local` (and `verify_restore.py --source=local`) to test drive-free. When you *do* test against the TM drive: Spotlight indexes mounted TM volumes aggressively, so keep runs short and unplug when done.
 
 ### `restore_claude_desktop.py`
 
