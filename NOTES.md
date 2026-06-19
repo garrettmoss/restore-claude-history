@@ -2,7 +2,7 @@
 
 Design rationale and lessons learned from building `restore_claude_code.py`. The README covers usage; this is for anyone who wants to understand *why* the script makes the choices it does — including future-you, six months from now, wondering "why am I parsing this in such a weird way?"
 
-## Prevention vs. restoration
+## Strategy: prevention vs. restoration
 
 Chats disappear for more than one reason. The documented one is `cleanupPeriodDays` in `~/.claude/settings.json` — a positive integer (default 30) that Claude Code reads on startup, then deletes any JSONL older than that. The default is too aggressive, the setting isn't exposed in the UI, and there's no warning before deletion.
 
@@ -14,7 +14,7 @@ Beyond the documented cleanup, **app updates appear to be the most-reported trig
 - [#38691](https://github.com/anthropics/claude-code/issues/38691) — "All sessions lost after Claude Desktop update on Windows (data intact on disk)."
 - [#48334](https://github.com/anthropics/claude-code/issues/48334) — "Desktop app update deletes session history."
 
-These are user reports, not Anthropic-confirmed root causes — but the pattern is consistent enough that any prevention story needs to assume updates can ignore the setting. Anecdotally on this machine: closing and reopening VS Code (which can pull in an update silently) has been the precipitating event multiple times.
+These are user reports, not Anthropic-confirmed root causes — but the pattern is consistent enough that any prevention story needs to assume updates can ignore the setting. (Why updates specifically — the mtime mechanism and the close→reopen pattern — is its own section below.)
 
 So there are two layers.
 
@@ -41,7 +41,7 @@ Full versioned roadmap (backup-v0.1 prevention half, backup-v0.2 restore-with-me
 
 **Restoration** is [`restore_claude_code.py`](restore_claude_code.py). It assumes the worst has already happened and pulls your chats back out of Time Machine. It's what catches you when prevention fails — which, given the track record, is a "when" not an "if."
 
-## Why updates seem to trigger this
+## Mechanism: why updates seem to trigger this
 
 **Update 2026-05-25:** [@ojura on #59248](https://github.com/anthropics/claude-code/issues/59248) identified one likely mechanism — almost certainly not the only one, given how long and how many ways this bug has manifested across updates: `cleanupOldSessionFiles` in `src/utils/cleanup.ts` deletes any `*.jsonl` whose **filesystem mtime** is older than `cleanupPeriodDays` ago — *not* the timestamp of the last message inside the file. Because mtime is externally mutable, anything that touches it without preserving the original flips a current session into "looks old, delete it" territory:
 
@@ -61,13 +61,13 @@ This has happened multiple times on this machine, even with `cleanupPeriodDays` 
 - **VS Code itself updating.**
 - **Claude Desktop updating** (when it's running in parallel; it shares some local state).
 
-I haven't isolated which of these is sufficient on its own — I'd need to disable auto-updates on each surface and reproduce, which is more work than I've done. But several of the GitHub issues describe the same shape: close → update → reopen → chats are gone. See [#41458](https://github.com/anthropics/claude-code/issues/41458), [#38055](https://github.com/anthropics/claude-code/issues/38055), [#12908](https://github.com/anthropics/claude-code/issues/12908), [#38691](https://github.com/anthropics/claude-code/issues/38691), [#48334](https://github.com/anthropics/claude-code/issues/48334).
+I haven't isolated which of these is sufficient on its own — I'd need to disable auto-updates on each surface and reproduce, which is more work than I've done. But several of the GitHub issues listed at the top of this file describe the same shape: close → update → reopen → chats are gone.
 
 The practical takeaway: **don't treat `cleanupPeriodDays` as the only line of defense.** If you've been using Claude Code for more than a few weeks and care about the transcripts, assume an update can wipe them at any time, and have Time Machine running. This tool is the catch when that happens.
 
 If you've reproduced this with a known-isolated trigger (just the CLI updating, just the extension, etc.), I'd genuinely like to know — open an issue on the repo or comment on the relevant `anthropics/claude-code` thread.
 
-## What we verified by hand, before scripting
+## Procedure: hand-verified recovery sequence
 
 Before writing any code, we worked through a real recovery in a Claude Code session. The script automates exactly this sequence:
 
@@ -92,7 +92,7 @@ Before writing any code, we worked through a real recovery in a Claude Code sess
 
 8. **Unmount everything on exit.** Use a trap (or `try/finally` in Python) so cleanup runs even on Ctrl-C or error.
 
-## Gotchas we learned the hard way
+## Gotchas: things the script silently works around
 
 These are the things the script is silently working around. Document them here so they don't get re-discovered.
 
@@ -103,7 +103,7 @@ These are the things the script is silently working around. Document them here s
   - `mdutil -d /Volumes/<TM drive>` reaches the real `kMDConfigSearchLevelOff`, briefly pauses workers (~10–20s observed) — *and is auto-re-enabled before mdutil's own status poll returns.* mdutil prints `Indexing enabled.` on the very next line. We don't yet know which process is re-enabling; candidates are `backupd`, `fseventsd`-tied volume-state hooks, or Spotlight's own self-healing for protected volume types. Apple's Spotlight Privacy UI deliberately refuses to add TM volumes to the exclusion list, consistent with there being a whitelist somewhere that makes them un-disable-able by normal means.
   - **Practical implications:** the CPU pain is the macOS auto-mount, not us. Mitigations open to the script (mdutil flags from the temp mountpoint, `.metadata_never_index` markers, mount-time flags) target the wrong path. Real fixes would require either Spotlight Privacy plist injection at `/Volumes/<TM drive>` (sudo, persists across mounts, modifies user system state — too invasive to ship), or staying off the TM drive entirely. v1.1's local-snapshot path does exactly that for the common case. **Mitigation if you must use the TM drive: be fast** — mount, restore, unmount, eject. The swarm is fundamentally outside our control.
 
-- **Sequential mounting (v1.0.1) helps the TM-drive case, but doesn't quiet Spotlight.** Earlier versions mounted every snapshot up-front. v1.0.1 mounts one at a time, walks it, unmounts, moves on. This *did* visibly reduce the concurrent-mount worker pile-up on the TM drive (no more 4-up CGPDFService at 20–50% CPU each on a 4-snapshot drive). What's left: ~12 mdworker_shared + ~5 CGPDFService spawn shortly after script exit with mds_stores spiking — best read is that they're scanning the macOS-owned auto-mount, which is still mounted because we deliberately don't touch it. Sequential mounting bounded what *we* contributed; it can't quiet what the OS auto-mount keeps active. v1.2 investigation (2026-06-01) confirmed this read with measurements — see the "Spotlight indexes the macOS-owned auto-mount..." entry above. v1.2 paused, not abandoned; harness lives in `tests/spotlight_harness.py`.
+- **Sequential mounting (v1.0.1) bounds what *we* contribute, but can't quiet the auto-mount.** Earlier versions mounted every snapshot up-front; v1.0.1 mounts one at a time, walks it, unmounts, moves on. This *did* visibly reduce the concurrent-mount worker pile-up on the TM drive (no more 4-up CGPDFService at 20–50% CPU each on a 4-snapshot drive). But the residual churn after script exit is the macOS-owned auto-mount we deliberately don't touch — see the entry above — so sequential mounting can't reach it. (v1.2 investigation paused, not abandoned; harness in `tests/spotlight_harness.py`.)
 
 - **Local APFS snapshots (v1.1) are tied to Time Machine activity, not a separate hourly cron.** Apple docs describe "hourly local snapshots retained 24h," and that's true *if Time Machine is configured to run automatically*. If you back up manually and rarely (as the maintainer does), local snapshots fire only when TM runs — so your "safety net" is effectively one snapshot from your last manual backup, not a rolling 24-hour window. Verified 2026-05-28 on a machine that hadn't backed up since 2026-04-24: exactly one local snapshot, dated to that day. Sized accordingly when you tell users what local-snapshot recovery can do for them.
 
@@ -116,6 +116,8 @@ These are the things the script is silently working around. Document them here s
 - **The auto-mount path has a doubled-`.backup` layout** (`<mp>/<ts>.backup/<ts>.backup/Data/...`) different from what `mount_apfs` produces yourself (`<mp>/<ts>.backup/Data/...`). The script probes both.
 
 - **`cp -p` fails with "Permission denied" when the destination already exists** with the read-only ACL inherited from a previous copy. Strip the ACL on the destination first (`chmod -N`).
+
+- **`mount_apfs` without Full Disk Access reports "Operation not permitted" (EPERM) — the word "permission" never appears.** A naive `"permission" in stderr` FDA-detection check silently never fires. The predicate must also match `"not permitted"`: `"not permitted" in low or "permission" in low`. Same treatment lives in `tests/spotlight_harness.py`.
 
 - **`tmutil` has no mount/unmount verbs.** It lists snapshots, restores files (limited), but does not let you mount one on demand. `mount_apfs` is the lower-level escape hatch.
 
@@ -131,15 +133,13 @@ These are the things the script is silently working around. Document them here s
 
 - **Claude Code re-appends identical `ai-title` events to JSONLs on every session resume, bumping mtime each time.** Observed in `young-ladys-primer` 2026-05-28: three JSONLs had identical second-precision mtimes (`May 21 20:53:03`) that didn't match their in-file message timestamps (May 10–19). The files each had 41–67 `ai-title` events appended over time, mostly identical to one prior — i.e. Claude is regenerating the same title and rewriting the line on every resume (or similar trigger). Two consequences for anyone reading restored files: (a) mtime is a poor proxy for "when the user last touched this chat" — use the last in-file `timestamp` field for chronological display; (b) this is concrete evidence for [@ojura's argument on #59248](https://github.com/anthropics/claude-code/issues/59248#issuecomment-4535863101) that retention should key off in-file timestamps, not stat.mtime — Claude's own code is mutating mtime in ways unrelated to user activity. Not something the restore script can fix; documented here so future readers don't blame the restore for "wrong" mtimes.
 
-- **Claude Desktop replaced compact, working metadata with bloated, broken metadata.** Comparing live `~/Library/Application Support/Claude/claude-code-sessions/<acct>/<org>/local_*.json` files against a 2026-04-17 Time Machine snapshot on this machine: snapshot files were 400-2,500 bytes with `cliSessionId` present and `transcriptUnavailable` unset; live files are 10-11 KB, missing `cliSessionId` on all 11 (where every snapshot file had it), and have `transcriptUnavailable: true` on 8 of 11. The new bulk is mostly inlined `enabledMcpTools` and `remoteMcpServersConfig` definitions. Net effect: Desktop's UI shows "Session not found on disk" for transcripts that are *literally still on disk* in `~/.claude/projects/` — it just lost the `cliSessionId` linkage that connects metadata to JSONL. The fix shape is metadata repair, not transcript restore, for this class of failure.
-
-## Claude Desktop session recovery — failure-mode taxonomy
+## Claude Desktop: session-recovery failure-mode taxonomy
 
 Investigated 2026-06-04 on this machine. Survey of Claude Desktop's session-storage surfaces revealed **two distinct failure modes** that need different fixes. Both show up in the UI as "broken sessions," but only one is recoverable from snapshots.
 
 **Verified Claude Desktop compatibility:** `restore_claude_desktop.py` `desktop-v0.1.0` end-to-end repair confirmed working on Claude Desktop **1.11187.4** (verified 2026-06-08, both pre- and post-auto-update on the same machine). The single-field recipe survived an in-place Desktop update — repaired sessions stayed healthy; no schema changes that broke detection. Treat the version as a known-good marker, not a ceiling: if future Desktop releases break the recipe, this is the last known-working version to bisect against. Recheck on any major Desktop update before assuming the script still applies.
 
-**Mode A — "Session not found on disk" / "Message not found on disk":** Metadata in `~/Library/Application Support/Claude/claude-code-sessions/<acct>/<org>/local_*.json` is present but damaged. The JSONL transcript is **still on disk** in `~/.claude/projects/<encoded-cwd>/`. Verified on this machine for `young-ladys-primer`: both `[X froze]` and the corresponding working session had on-disk JSONLs whose first-record timestamps matched the metadata's `createdAt` within 1-3 seconds, but Desktop couldn't link them because `cliSessionId` had been stripped from every metadata file (11/11). Snapshot diff (live vs 2026-04-17) showed `cliSessionId` was *present* in every historical metadata file — i.e. Desktop stripped it during some later migration/cleanup pass.
+**Mode A — "Session not found on disk" / "Message not found on disk":** Metadata in `~/Library/Application Support/Claude/claude-code-sessions/<acct>/<org>/local_*.json` is present but damaged. The JSONL transcript is **still on disk** in `~/.claude/projects/<encoded-cwd>/`. Verified on this machine for `young-ladys-primer`: both `[X froze]` and the corresponding working session had on-disk JSONLs whose first-record timestamps matched the metadata's `createdAt` within 1-3 seconds, but Desktop couldn't link them because `cliSessionId` had been stripped from every metadata file (11/11). Snapshot diff (live vs 2026-04-17) showed `cliSessionId` was *present* in every historical metadata file — i.e. Desktop stripped it during some later migration/cleanup pass. The same diff showed the files also bloated from 400–2,500 bytes (compact, working) to 10–11 KB (mostly inlined `enabledMcpTools` / `remoteMcpServersConfig`), with `transcriptUnavailable: true` newly set on 8 of 11.
 
 **The fix is a single field.** Verified by hand 2026-06-04 on two `young-ladys-primer` sessions (`local_ece5671d-*` via schema rollback from the 2026-04-17 snapshot, then `local_229c1e5b-*` via surgical edit on the live file): **adding `cliSessionId` to the broken `local_*.json` and removing `transcriptUnavailable` is sufficient.** On next Desktop launch, the transcript loads and Desktop re-stamps the file with current schema bloat (`enabledMcpTools`, `remoteMcpServersConfig`, etc.) — but it preserves `cliSessionId` and does *not* re-add `transcriptUnavailable`. So `transcriptUnavailable: true` is **symptom, not cause**: Desktop writes it when `cliSessionId` is missing at load time. The schema-rollback worked not because the old schema was right, but because that schema happened to carry `cliSessionId`.
 
@@ -165,37 +165,6 @@ A few new artifacts surfaced during this investigation that the original recover
 - **Mode A fallback — snapshot restore on ambiguous match.** *Deferred to v0.2.0.* Surfaced in the report as "NEEDS REVIEW," no action taken.
 - **Mode B — `sessions-index.json` diff + JSONL restore + Mode A repair.** *Deferred to v0.3.0.* Surfaced as "LOST" with a callout pointing users at `restore_claude_code.py` for the transcript-restore half.
 - **Preflight (both modes).** *Implemented in v0.1.0.* Refuses to act while Desktop is running (`pgrep -f Claude.app/Contents/MacOS`).
-
-## Related GitHub issues
-
-Open threads in `anthropics/claude-code` where users are hitting the disappearing-chats problem. Captured 2026-05-24 — comment counts will drift.
-
-**My own filed issue:** [#62272 — Chat JSONLs deleted from `~/.claude/projects/` despite `cleanupPeriodDays` set high — appears triggered by updates/restarts](https://github.com/anthropics/claude-code/issues/62272). Filed 2026-05-25.
-
-### To do — open, unposted
-
-Plausibly macOS-relevant. Check each for an actual macOS sufferer in-thread before drafting; if it's all-Windows, skip (BasedGPT's Windows toolkit serves those) and note it here. Tailor each comment to the thread — don't paste verbatim.
-
-- [ ] [#12908 — Conversation History disappeared after update](https://github.com/anthropics/claude-code/issues/12908)
-- [ ] [#46621 — Critical: Claude Code silently deletes conversation history without user consent](https://github.com/anthropics/claude-code/issues/46621)
-- [ ] [#46175 — Feature Request: Notify users before auto-deleting conversation history](https://github.com/anthropics/claude-code/issues/46175)
-- [ ] [#16970 — claude is losing chat history](https://github.com/anthropics/claude-code/issues/16970)
-- [ ] [#61952 — ~20 sessions lost, only 11 survived - 2 months of work I paid for - gone](https://github.com/anthropics/claude-code/issues/61952)
-- [ ] [#61038 — Old chats wiped, no session summary](https://github.com/anthropics/claude-code/issues/61038)
-
-### Posted
-
-- [x] [#59248 — Silent retention cleanup deletes session transcripts with no warning, opt-in, or recovery](https://github.com/anthropics/claude-code/issues/59248). *Posted 2026-05-24 — the title bug is exactly what this tool addresses; recovery link squarely on-topic.*
-- [x] [#41458 — `cleanupPeriodDays: 99999` ignored — 490 sessions silently deleted despite explicit setting](https://github.com/anthropics/claude-code/issues/41458). *Posted 2026-05-25 — users who set the flag and still lost data; the evidence that prevention alone isn't enough.*
-- [x] [#26452 — Session Disappeared After Logout / Restart of Claude Code Desktop](https://github.com/anthropics/claude-code/issues/26452). *Posted 2026-05-25, anchored to @BasedGPT's bucket-3 decision tree.*
-- [x] [#9258 — History Sessions lost in Vscode plugin](https://github.com/anthropics/claude-code/issues/9258). *Posted 2026-05-25, replying to @DeveloperAlly's root-cause-#5 anchor.*
-- [x] [#60984 — Regression in 2.1.144/2.1.145: conversation JSONL files only save ai-title, no message content written to disk](https://github.com/anthropics/claude-code/issues/60984). *Posted 2026-06-11, replying to @chuqk's 2026-06-09 macOS repro; scoped to written-then-deleted, distinguished from the never-persisted write bug.*
-- [x] [#53717 — Windows: sessions in sidebar but all message content missing after auto-update](https://github.com/anthropics/claude-code/issues/53717). *Posted 2026-06-12, replying to @1nwooozip's macOS comment (the OP's 1KB-stub case is genuine never-persisted loss, out of scope for us). Two-script pipeline + amplified his "don't send a message in a broken session" footgun.*
-- [x] [#48334 — Desktop app update deletes session history (`sessions-index.json` + `.jsonl` files)](https://github.com/anthropics/claude-code/issues/48334). *Posted 2026-06-12: general note for future macOS readers (not pitched at @rpranjan11, whose case is confirmed unrecoverable — JSONLs deleted, no backup). Framed as the macOS transcript-restore half complementing @BasedGPT's Windows metadata toolkit.*
-
-### Desktop-specific — worth a fresh search
-
-Desktop session-loss reports are a growing share of the tracker, and they're often the recoverable macOS metadata case `restore_claude_desktop.py` handles. Re-search the tracker periodically for new Desktop threads with a macOS sufferer; add them to the To-do queue above.
 
 ## Origin
 

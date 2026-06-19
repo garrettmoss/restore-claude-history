@@ -155,7 +155,7 @@ Then launch Claude Desktop to verify — repaired sessions should load normally.
 
 ## Background reading
 
-See [NOTES.md](NOTES.md) for the full story: how the bug works, what Time Machine snapshots actually look like, what we tried that didn't work, and the verified working commands from the original recovery session. The "Claude Desktop session recovery — failure-mode taxonomy" section there documents the Mode A / Mode B split the Desktop tool acts on.
+See [NOTES.md](NOTES.md) for the full story: how the bug works, what Time Machine snapshots actually look like, what we tried that didn't work, and the verified working commands from the original recovery session. The "Claude Desktop: session-recovery failure-mode taxonomy" section there documents the Mode A / Mode B split the Desktop tool acts on.
 
 ### See also
 
