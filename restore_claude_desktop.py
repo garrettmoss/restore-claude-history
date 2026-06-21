@@ -23,7 +23,7 @@ See NOTES.md → "Claude Desktop session recovery — failure-mode taxonomy".
 
 from __future__ import annotations
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 
 # Last Claude Desktop version verified working end-to-end. Bump (and re-verify)
 # when running against a newer Desktop release. See NOTES.md → "Claude Desktop
@@ -34,6 +34,7 @@ import argparse
 import glob
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -120,18 +121,15 @@ def encoded_project_dir(cwd: str) -> str:
     project-dir name (e.g. -Users-foo-projects-bar). The replacement of '/'
     with '-' is what produces the leading hyphen — don't add one yourself.
 
-    Claude Code also replaces space, '.', and '~' with '-' when forming the
-    project-dir name on disk. Cwds containing any of these (e.g. iCloud paths
-    like `.../com~apple~CloudDocs/...`, project folders with spaces, or
-    worktree paths under `.claude/worktrees/`) must be folded the same way
-    here, otherwise the on-disk dir lookup misses and a recoverable session
-    is misclassified as LOST.
+    Claude Code also replaces space, '.', '~', '_', and "'" with '-' when
+    forming the project-dir name on disk. Cwds containing any of these (e.g.
+    iCloud paths like `.../com~apple~CloudDocs/...`, project folders with
+    spaces, underscores, or apostrophes, or worktree paths under
+    `.claude/worktrees/`) must be folded the same way here, otherwise the
+    on-disk dir lookup misses and a recoverable session is misclassified as
+    LOST. The full set was verified empirically against Claude Code 2.1.91.
     """
-    return (cwd
-            .replace("/", "-")
-            .replace(" ", "-")
-            .replace(".", "-")
-            .replace("~", "-"))
+    return re.sub(r"[/ .~_']", "-", cwd)
 
 
 def desktop_sessions_root(home: Path) -> Path:
