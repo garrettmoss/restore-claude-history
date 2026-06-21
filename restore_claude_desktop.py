@@ -119,8 +119,19 @@ def encoded_project_dir(cwd: str) -> str:
     Map an absolute cwd (e.g. /Users/foo/projects/bar) to Claude's encoded
     project-dir name (e.g. -Users-foo-projects-bar). The replacement of '/'
     with '-' is what produces the leading hyphen — don't add one yourself.
+
+    Claude Code also replaces space, '.', and '~' with '-' when forming the
+    project-dir name on disk. Cwds containing any of these (e.g. iCloud paths
+    like `.../com~apple~CloudDocs/...`, project folders with spaces, or
+    worktree paths under `.claude/worktrees/`) must be folded the same way
+    here, otherwise the on-disk dir lookup misses and a recoverable session
+    is misclassified as LOST.
     """
-    return cwd.replace("/", "-")
+    return (cwd
+            .replace("/", "-")
+            .replace(" ", "-")
+            .replace(".", "-")
+            .replace("~", "-"))
 
 
 def desktop_sessions_root(home: Path) -> Path:
