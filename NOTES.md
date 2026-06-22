@@ -14,7 +14,7 @@ Beyond the documented cleanup, **app updates appear to be the most-reported trig
 - [#38691](https://github.com/anthropics/claude-code/issues/38691) — "All sessions lost after Claude Desktop update on Windows (data intact on disk)."
 - [#48334](https://github.com/anthropics/claude-code/issues/48334) — "Desktop app update deletes session history."
 
-These are user reports, not Anthropic-confirmed root causes — but the pattern is consistent enough that any prevention story needs to assume updates can ignore the setting. (Why updates specifically — the mtime mechanism and the close→reopen pattern — is its own section below.)
+These are user reports, not Anthropic-confirmed root causes — but the pattern is consistent enough that any prevention story needs to assume updates can ignore the setting. (Why updates specifically: the mtime mechanism in §Mechanism below.)
 
 So there are two layers.
 
@@ -32,10 +32,10 @@ A forward-looking backup is the natural complement here — a `SessionStart` hoo
 
 **Decided 2026-06-16: this becomes `backup_claude_history.py`, a committed in-repo script** (not the "stretch / sibling project" it was first scoped as). The shape, locked that session:
 
-- **Backup (prevention) and TM restore (failsafe) stay separate, routed by docs.** `backup_claude_history.py restore` reads the user's own continuous backups — the everyday path. `restore_claude_code.py` stays the Time Machine / APFS failsafe for chats older than the backups reach, unchanged. We deliberately do *not* merge the TM script into a "check backups first, fall back to TM" router: that would couple a tested, working script to a backup format and give it two code paths. Two scripts, two sources, one job each; the docs do the routing. (Renaming the old scripts for clarity, e.g. to signal "TM failsafe," is a *later* consideration once the backup layer is running — not now.)
-- **On-disk layout is mirror + manifest.** Mirror the `~/.claude/projects/` tree into `~/.claude-session-backups/`, plus a `manifest.json` of per-file `{bytes, src_mtime, backed_up_at}`. The manifest exists to detect *silent hook failure* — a backup that quietly stopped running is the classic way backups betray you. Layout locks before the hook is installed, so hook and tool agree from day one.
-- **Why a hook fits the maintainer's case specifically:** he runs WiFi-off when idle and only ever observes deletions on app close/restart — there is no background-sweep window for him, so a `SessionStart` hook (fires on reopen, right after the close that triggers the sweep) captures the high-water mark before the next sweep. Users with background/auto-update exposure would want the optional LaunchAgent instead. The hook's one residual gap: content written in a session that's then closed-and-swept *before* the next reopen isn't captured until reopen — acceptable for a stopgap; LaunchAgent closes it.
-- **Credit, don't copy:** write our own implementation of ojura's copy-on-grow logic, credit him, link [#59248](https://github.com/anthropics/claude-code/issues/59248). His snippet already runs on macOS unmodified (`stat -c%s || stat -f%z`). Verbatim archive + his stated-safe "write your own + cite" preference in [personal-notes.md](personal-notes.md).
+- **Backup (prevention) and TM restore (failsafe) stay separate, routed by docs.** `backup_claude_history.py restore` reads the user's own backups (everyday path); `restore_claude_code.py` stays the unchanged TM/APFS failsafe for chats older than the backups reach. Deliberately *not* a "check backups, fall back to TM" router — that would couple a tested script to a backup format and give it two code paths. Two scripts, two sources, one job each.
+- **On-disk layout is mirror + manifest.** Mirror `~/.claude/projects/` into `~/.claude-session-backups/`, plus a `manifest.json` of per-file `{bytes, src_mtime, backed_up_at}`. The manifest exists to detect *silent hook failure* — a backup that quietly stopped running is the classic way backups betray you.
+- **`SessionStart` hook, with an optional LaunchAgent.** The hook fires on reopen — right after the close/restart that triggers the sweep — so it captures the high-water mark before the next sweep. It suffices as the v0.1 starting point because the maintainer's deletions only occur on close/restart (WiFi-off when idle = no background sweep window), so hook-on-reopen catches every case. Its gap: a session closed-and-swept before the next reopen isn't captured until reopen — the LaunchAgent closes that, and is only needed once background/auto-update exposure is in play.
+- **Credit, don't copy:** write our own copy-on-grow logic, credit ojura, link [#59248](https://github.com/anthropics/claude-code/issues/59248) (his stated-safe preference).
 
 Full versioned roadmap (backup-v0.1 prevention half, backup-v0.2 restore-with-metadata-repair) in [TODO.md](TODO.md).
 
@@ -51,21 +51,9 @@ Full versioned roadmap (backup-v0.1 prevention half, backup-v0.2 restore-with-me
 
 This is also why `restore_claude_code.py` goes out of its way to preserve the snapshot's original mtime and explicitly re-stamp after any retry (NOTES step 5 below). If a restore landed with a fresh `now` mtime, the next cleanup pass would happily delete months of work all over again.
 
-That said, the mtime story doesn't explain everything. Even with the flag set high *and* mtimes preserved, sessions still vanish around updates. The precipitating event, in my experience, has not been "I left chats sitting around for 30+ days and `cleanupPeriodDays` finally got them." It's been: **I closed VS Code, reopened it, and the chats were gone.**
+That said, the mtime story doesn't explain everything. Even with the flag set high *and* mtimes preserved, sessions still vanish — and the precipitating event isn't "left them 30+ days until cleanup got them," it's **close → something updates → reopen → chats gone.** Reproduced multiple times on this machine; the common factor is an update between close and reopen (CLI, VS Code extension, VS Code itself, or Claude Desktop — sometimes just a restart with no version change), but which surface is *sufficient on its own* isn't isolated. Several of the issues in §Strategy describe the same shape.
 
-This has happened multiple times on this machine, even with `cleanupPeriodDays` set to a high value. The common factor across every occurrence is that *something updated* between close and reopen — but I can't always tell *what*. Candidates I've ruled in and not yet ruled out:
-
-- **The Claude Code CLI updating** (it self-updates frequently and quietly).
-- **The Claude Code VS Code extension updating** (extensions auto-update by default).
-- **The extension or its host process restarting** — even without a version change, a restart appears to be enough to trip something.
-- **VS Code itself updating.**
-- **Claude Desktop updating** (when it's running in parallel; it shares some local state).
-
-I haven't isolated which of these is sufficient on its own — I'd need to disable auto-updates on each surface and reproduce, which is more work than I've done. But several of the GitHub issues listed at the top of this file describe the same shape: close → update → reopen → chats are gone.
-
-The practical takeaway: **don't treat `cleanupPeriodDays` as the only line of defense.** If you've been using Claude Code for more than a few weeks and care about the transcripts, assume an update can wipe them at any time, and have Time Machine running. This tool is the catch when that happens.
-
-If you've reproduced this with a known-isolated trigger (just the CLI updating, just the extension, etc.), I'd genuinely like to know — open an issue on the repo or comment on the relevant `anthropics/claude-code` thread.
+The practical takeaway: **don't treat `cleanupPeriodDays` as the only line of defense.** Assume an update can wipe transcripts at any time, and keep Time Machine running. This tool is the catch when that happens. (Reproduced a known-isolated trigger? Open an issue on the repo.)
 
 ## Procedure: hand-verified recovery sequence
 
@@ -131,9 +119,11 @@ These are the things the script is silently working around. Document them here s
 
 - **macOS ships bash 3.2** (frozen for licensing reasons since 2006). No associative arrays. We tried writing this in bash first; the resulting code was readable only via `sort | awk` pipeline tricks and a `trap` cleanup that turned out to be buggy. Python made all of this go away.
 
-- **Claude Desktop re-appends redundant bookkeeping records (`mode`, `custom-title`, `ai-title`) to JSONLs on lifecycle events, bumping mtime each time.** Originally observed in `young-ladys-primer` 2026-05-28 as `ai-title` churn: three JSONLs had identical second-precision mtimes (`May 21 20:53:03`) that didn't match their in-file message timestamps (May 10–19), each with 41–67 mostly-identical `ai-title` events. **Re-investigated 2026-06-21 and the mechanism is broader than `ai-title`** — caught live during a controlled quit/reopen test. On Claude Desktop **quit** (Cmd+Q), two `young-ladys-primer` JSONLs whose newest *message* was from March were rewritten: mtime bumped to quit-time (identical to the second across both files → a single sweep, not per-chat resume), each grew +166/+195 bytes, and **neither had any `ai-title` events at all**. What got appended was duplicate `{"type":"mode","mode":"normal","sessionId":…}` records (one file had 9 total, the last 3 lines all identical) and duplicate `{"type":"custom-title","customTitle":…,"sessionId":…}` records (the other file had 28, trailing ones repeating `"USB drive repo clone"`). Then **opening a chat** (clicking it in Desktop, no typing) was caught doing the same thing to just that one file: another identical `mode` + `custom-title` appended, mtime → now (`mode 21→22`, `custom-title 28→29`). Plain **reopen/startup touched nothing** — the diff after relaunch (no chat clicked) was empty. So the trigger is **chat-open and quit, not startup**. Confirmed on Desktop `1.14271.0`, macOS 15.7.4. One-step repro: `stat -f '%Sm'` an old JSONL, click the chat in Desktop, re-`stat` — mtime is "now" and `tail -2` shows freshly-appended duplicate `mode`/`custom-title` records.
-
-So the bug is **redundant append of bookkeeping records that match the prior value** — `mode`/`custom-title`/`ai-title` are all instances — triggered by chat-open and app-quit, unrelated to any actual conversation. Filed as [#69939](https://github.com/anthropics/claude-code/issues/69939) (distinct from the deletion bug #62272 and from the title-reversion cluster #40787/#62201). Two consequences for anyone reading restored files: (a) mtime is a poor proxy for "when the user last touched this chat" — use the last in-file message `timestamp` field for chronological display, and ignore `mode`/`custom-title`/`ai-title`/`summary` records when computing it; (b) this is concrete evidence for [@ojura's argument on #59248](https://github.com/anthropics/claude-code/issues/59248#issuecomment-4535863101) that retention should key off in-file timestamps, not stat.mtime — Claude's own code is mutating mtime in ways unrelated to user activity. Not something the restore script can fix; documented here so future readers don't blame the restore for "wrong" mtimes.
+- **Claude re-appends bookkeeping records (`mode`, `permission-mode`, `custom-title`, `ai-title`) to JSONLs without checking they duplicate the current value, bumping mtime each time.** Triggered by opening a chat or quitting in Desktop, and by CLI `--continue`/`--resume` — not by actual conversation.
+  - So mtime is a poor proxy for last activity. Derive chronology from the last real-message `timestamp`; ignore bookkeeping records.
+  - The restore script preserves snapshot mtime correctly. Later churn is what makes restored files look "wrong" — don't blame the restore.
+  - Don't build a downstream scrubber: it re-bloats on the next open/quit, and rewriting to strip dupes bumps mtime (the exact failure this repo warns about). The fix belongs upstream at the write path.
+  - This is why retention must key off in-file timestamps, not mtime — Claude's own code mutates mtime independent of user activity. (See [@ojura on #59248](https://github.com/anthropics/claude-code/issues/59248#issuecomment-4535863101).)
 
 ## Claude Desktop: session-recovery failure-mode taxonomy
 
