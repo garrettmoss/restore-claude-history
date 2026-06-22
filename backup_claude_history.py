@@ -19,7 +19,7 @@ Verbs (backup-v0.1.0, the prevention half):
   list       What's backed up, grouped by project.
 
 On-disk layout (mirror + manifest):
-  ~/.claude-session-backups/
+  ~/.claude-code-backups/
     projects/<encoded-project>/<uuid>.jsonl       mirror of ~/.claude/projects/
     manifest.json                                 per-file {bytes, src_mtime, backed_up_at}
 The manifest exists to detect *silent hook failure* — a backup that quietly
@@ -63,7 +63,8 @@ def projects_root(home: Path) -> Path:
 
 
 def backup_root(home: Path) -> Path:
-    return home / ".claude-session-backups"
+    # "code" not "session": scopes this to Claude Code, not Desktop's store.
+    return home / ".claude-code-backups"
 
 
 def backup_projects_root(home: Path) -> Path:
