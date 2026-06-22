@@ -44,6 +44,24 @@ from __future__ import annotations
 
 __version__ = "0.1.0"
 
+# Cheap pre-filter for the substantial-vs-noise *reporting* split (never gates
+# the backup itself — every grown file is copied regardless). Growth above this
+# many bytes is taken as substantial without inspection: real exchanges are
+# large and parsing them would be wasted work. Only growth at or below this is
+# worth opening up to check *what* the new records actually are (see
+# growth_is_only_bookkeeping). Set generously: being wrong-high just means we
+# parse a tail we didn't strictly need to — a few milliseconds, no risk. The
+# real judgment is by record type, not this number. See NOTES.md → bookkeeping-bug.
+SUBSTANTIAL_GROWTH_BYTES = 2048
+
+# JSONL record `type`s that Claude re-appends as bookkeeping — unchanged — on
+# every Desktop open/quit and on CLI --continue/--resume, without checking they
+# duplicate the current value. Growth made up *only* of these is churn, not new
+# conversation. Anything else (notably `user`/`assistant`) is real content.
+BOOKKEEPING_RECORD_TYPES = frozenset(
+    {"custom-title", "ai-title", "mode", "permission-mode", "last-prompt"}
+)
+
 import argparse
 import json
 import os
@@ -178,6 +196,7 @@ def manifest_last_run(home: Path) -> str | None:
 class BackupResult:
     copied: int = 0
     copied_subagents: int = 0   # subset of `copied` that are subagent fragments
+    substantial: int = 0        # subset of `copied`: grew by > SUBSTANTIAL_GROWTH_BYTES
     skipped: int = 0
     bytes_copied: int = 0
     failed: int = 0
@@ -195,6 +214,60 @@ def is_subagent(rel: str) -> bool:
     subagent calls, not lost chats.
     """
     return rel.count("/") > 1
+
+
+def growth_is_only_bookkeeping(src: Path, prev_bytes: int) -> bool:
+    """
+    Read only the records appended since the last backup (the bytes past
+    `prev_bytes`) and return True iff every one of them is a bookkeeping record
+    type — i.e. the file "grew" but gained no real conversation.
+
+    This is the judge behind the substantial-vs-noise report. We seek to
+    prev_bytes so we parse just the appended tail, not the whole file. Conserva-
+    tive on uncertainty: any parse failure, any unknown/real record type, or an
+    empty tail all return False (treat as substantial), so we never *quietly*
+    under-report something that might be real content. The cost of a False here
+    is only a louder status line; never lost data.
+    """
+    try:
+        with src.open("rb") as f:
+            f.seek(prev_bytes)
+            tail = f.read()
+    except OSError:
+        return False
+    text = tail.decode("utf-8", errors="replace")
+    saw_record = False
+    # The seek may land mid-line if the previous record didn't end exactly at
+    # prev_bytes; a partial leading fragment just parses as junk → False, which
+    # is the safe (substantial) direction.
+    for line in text.splitlines():
+        if not line.strip():
+            continue
+        try:
+            rec = json.loads(line)
+        except json.JSONDecodeError:
+            return False
+        if rec.get("type") not in BOOKKEEPING_RECORD_TYPES:
+            return False
+        saw_record = True
+    return saw_record
+
+
+def growth_is_substantial(src: Path, prev: "ManifestEntry | None") -> bool:
+    """
+    Did `src` gain real conversation since its last backup (vs. only bookkeeping
+    churn)? Gate then judge: a brand-new file or growth above
+    SUBSTANTIAL_GROWTH_BYTES is substantial without inspection (cheap, common
+    path); only small growth on an existing file is parsed to see whether the
+    appended records are all bookkeeping. Shared by run_backup and cmd_status so
+    the two never disagree on what counts as substantial.
+    """
+    if prev is None:
+        return True  # brand-new file: new content by definition
+    growth = src.stat().st_size - prev.bytes
+    if growth > SUBSTANTIAL_GROWTH_BYTES:
+        return True
+    return not growth_is_only_bookkeeping(src, prev.bytes)
 
 
 def copy_preserving_mtime(src: Path, dst: Path) -> None:
@@ -260,6 +333,8 @@ def run_backup(home: Path, verbose: bool) -> BackupResult:
         result.copied += 1
         if is_subagent(rel):
             result.copied_subagents += 1
+        if growth_is_substantial(src, prev):
+            result.substantial += 1
         result.bytes_copied += st.st_size
         if verbose:
             print(f"  backed up {rel} ({st.st_size} bytes)")
@@ -433,8 +508,9 @@ def cmd_status(home: Path, script_path: Path) -> int:
     # Coverage check: live JSONLs the manifest doesn't cover, or that have grown
     # past what we last captured. This is the silent-failure detector.
     src_root = projects_root(home)
-    missing = 0
-    stale = 0
+    missing = 0          # live files with no backup at all — genuine gap
+    stale_real = 0       # grew past the noise threshold — likely real new content
+    stale_noise = 0      # grew, but only a little — likely Desktop bookkeeping
     live_convos = 0
     live_subagents = 0
     if src_root.is_dir():
@@ -452,16 +528,29 @@ def cmd_status(home: Path, script_path: Path) -> int:
             if prev is None:
                 missing += 1
             elif size > prev.bytes:
-                stale += 1
+                if growth_is_substantial(src, prev):
+                    stale_real += 1
+                else:
+                    stale_noise += 1
     print(f"  live transcripts: {live_convos + live_subagents} "
           f"({live_convos} conversation(s) + {live_subagents} subagent fragment(s))")
-    if missing or stale:
+    # `missing` and substantial growth are real coverage gaps worth a ⚠ and a
+    # nudge to run backup. Minor growth alone is reported calmly, without alarm —
+    # it's almost always Desktop bookkeeping churn, and it's already backed up.
+    if missing or stale_real:
         print()
         if missing:
             print(f"  ⚠ {missing} live transcript(s) not yet backed up")
-        if stale:
-            print(f"  ⚠ {stale} live transcript(s) have grown since last backup")
+        if stale_real:
+            print(f"  ⚠ {stale_real} live transcript(s) have new content since last backup")
         print("    Run `backup` (or just start a Claude Code session if the hook is installed).")
+        if stale_noise:
+            print(f"  ({stale_noise} more grew by a trivial amount — likely Claude "
+                  f"Desktop bookkeeping, not new messages.)")
+    elif stale_noise:
+        print()
+        print(f"  ✓ all conversations backed up "
+              f"({stale_noise} had trivial bookkeeping-only growth — nothing to worry about)")
     elif installed and last_run:
         print()
         print("  ✓ all live transcripts are backed up")
@@ -539,18 +628,23 @@ def main() -> int:
 
     if args.verb == "backup":
         r = run_backup(home, args.verbose)
-        # Quiet by default (the hook runs this on every session start). One
-        # summary line only when something was copied or failed.
-        if r.copied or r.failed:
-            convos = r.copied - r.copied_subagents
-            detail = f"{convos} conversation{'s' if convos != 1 else ''}"
-            if r.copied_subagents:
-                detail += f" + {r.copied_subagents} subagent fragment{'s' if r.copied_subagents != 1 else ''}"
-            msg = (f"backup: {r.copied} file(s) copied ({detail}, "
-                   f"{_human_bytes(r.bytes_copied)}), {r.skipped} unchanged")
-            if r.failed:
-                msg += f", {r.failed} failed"
-            print(msg)
+        # Quiet by default (the hook runs this on every session start). Lead with
+        # *substantial* backups — files with real new content. Minor growth (the
+        # rest) is almost always Claude Desktop re-appending unchanged bookkeeping
+        # records on every open/quit, which would otherwise flood this line with
+        # re-backups of idle chats. Both are still backed up; we just don't shout
+        # about the noise. See SUBSTANTIAL_GROWTH_BYTES.
+        noise = r.copied - r.substantial
+        if r.substantial or r.failed:
+            print(f"backup: {r.substantial} updated with new content "
+                  f"({_human_bytes(r.bytes_copied)})"
+                  + (f", {noise} minor (likely Claude Desktop bookkeeping)" if noise else "")
+                  + f", {r.skipped} unchanged"
+                  + (f", {r.failed} failed" if r.failed else ""))
+        elif noise:
+            # Nothing substantial — only churn. Stay calm and quiet about it.
+            print(f"backup: {noise} chat(s) updated with minor changes only "
+                  f"(likely Claude Desktop bookkeeping, not new messages)")
         return 1 if r.failed else 0
 
     if args.verb == "install":
