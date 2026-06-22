@@ -177,9 +177,24 @@ def manifest_last_run(home: Path) -> str | None:
 @dataclass
 class BackupResult:
     copied: int = 0
+    copied_subagents: int = 0   # subset of `copied` that are subagent fragments
     skipped: int = 0
     bytes_copied: int = 0
     failed: int = 0
+
+
+def is_subagent(rel: str) -> bool:
+    """
+    True if a rel path (relative to the projects root) is a subagent fragment
+    rather than a top-level conversation transcript.
+
+    Parent conversations live at <project>/<uuid>.jsonl (2 path segments).
+    Subagent fragments live deeper, at <project>/<uuid>/subagents/agent-*.jsonl.
+    The backup keeps both, but counting them separately stops "80 transcripts"
+    from reading as "80 conversations you forgot about" — most of the surplus is
+    subagent calls, not lost chats.
+    """
+    return rel.count("/") > 1
 
 
 def copy_preserving_mtime(src: Path, dst: Path) -> None:
@@ -243,6 +258,8 @@ def run_backup(home: Path, verbose: bool) -> BackupResult:
             backed_up_at=now_iso(),
         )
         result.copied += 1
+        if is_subagent(rel):
+            result.copied_subagents += 1
         result.bytes_copied += st.st_size
         if verbose:
             print(f"  backed up {rel} ({st.st_size} bytes)")
@@ -406,7 +423,10 @@ def cmd_status(home: Path, script_path: Path) -> int:
     print(f"  hook installed:  {'yes' if installed else 'NO — run: install'}")
     print(f"  last backup run: {fmt_age(last_run)}" + (f"  ({last_run})" if last_run else ""))
     print(f"  backup root:     {backup_root(home)}")
-    print(f"  files tracked:   {len(manifest)}")
+    tracked_subagents = sum(1 for rel in manifest if is_subagent(rel))
+    tracked_convos = len(manifest) - tracked_subagents
+    print(f"  files tracked:   {len(manifest)} "
+          f"({tracked_convos} conversation(s) + {tracked_subagents} subagent fragment(s))")
     total = sum(e.bytes for e in manifest.values())
     print(f"  backed-up size:  {_human_bytes(total)}")
 
@@ -415,11 +435,15 @@ def cmd_status(home: Path, script_path: Path) -> int:
     src_root = projects_root(home)
     missing = 0
     stale = 0
-    live_count = 0
+    live_convos = 0
+    live_subagents = 0
     if src_root.is_dir():
         for src in src_root.rglob("*.jsonl"):
-            live_count += 1
             rel = src.relative_to(src_root).as_posix()
+            if is_subagent(rel):
+                live_subagents += 1
+            else:
+                live_convos += 1
             try:
                 size = src.stat().st_size
             except OSError:
@@ -429,7 +453,8 @@ def cmd_status(home: Path, script_path: Path) -> int:
                 missing += 1
             elif size > prev.bytes:
                 stale += 1
-    print(f"  live transcripts: {live_count}")
+    print(f"  live transcripts: {live_convos + live_subagents} "
+          f"({live_convos} conversation(s) + {live_subagents} subagent fragment(s))")
     if missing or stale:
         print()
         if missing:
@@ -517,7 +542,12 @@ def main() -> int:
         # Quiet by default (the hook runs this on every session start). One
         # summary line only when something was copied or failed.
         if r.copied or r.failed:
-            msg = f"backup: {r.copied} copied ({_human_bytes(r.bytes_copied)}), {r.skipped} unchanged"
+            convos = r.copied - r.copied_subagents
+            detail = f"{convos} conversation{'s' if convos != 1 else ''}"
+            if r.copied_subagents:
+                detail += f" + {r.copied_subagents} subagent fragment{'s' if r.copied_subagents != 1 else ''}"
+            msg = (f"backup: {r.copied} file(s) copied ({detail}, "
+                   f"{_human_bytes(r.bytes_copied)}), {r.skipped} unchanged")
             if r.failed:
                 msg += f", {r.failed} failed"
             print(msg)
