@@ -33,11 +33,19 @@ A forward-looking backup is the natural complement here — a `SessionStart` hoo
 **Decided 2026-06-16: this becomes `backup_claude_history.py`, a committed in-repo script** (not the "stretch / sibling project" it was first scoped as). The shape, locked that session:
 
 - **Backup (prevention) and TM restore (failsafe) stay separate, routed by docs.** `backup_claude_history.py restore` reads the user's own backups (everyday path); `restore_claude_code.py` stays the unchanged TM/APFS failsafe for chats older than the backups reach. Deliberately *not* a "check backups, fall back to TM" router — that would couple a tested script to a backup format and give it two code paths. Two scripts, two sources, one job each.
-- **On-disk layout is mirror + manifest.** Mirror `~/.claude/projects/` into `~/.claude-session-backups/`, plus a `manifest.json` of per-file `{bytes, src_mtime, backed_up_at}`. The manifest exists to detect *silent hook failure* — a backup that quietly stopped running is the classic way backups betray you.
+- **On-disk layout is mirror + manifest.** Mirror `~/.claude/projects/` into `~/.claude-code-backups/`, plus a `manifest.json` of per-file `{bytes, src_mtime, backed_up_at}`. The manifest exists to detect *silent hook failure* — a backup that quietly stopped running is the classic way backups betray you. (Dir named `claude-code-backups`, not `-session-backups`: scopes it to Claude Code, not Desktop's own session store; "session" is overloaded in this ecosystem.)
 - **`SessionStart` hook, with an optional LaunchAgent.** The hook fires on reopen — right after the close/restart that triggers the sweep — so it captures the high-water mark before the next sweep. It suffices as the v0.1 starting point because the maintainer's deletions only occur on close/restart (WiFi-off when idle = no background sweep window), so hook-on-reopen catches every case. Its gap: a session closed-and-swept before the next reopen isn't captured until reopen — the LaunchAgent closes that, and is only needed once background/auto-update exposure is in play.
 - **Credit, don't copy:** write our own copy-on-grow logic, credit ojura, link [#59248](https://github.com/anthropics/claude-code/issues/59248) (his stated-safe preference).
 
 Full versioned roadmap (backup-v0.1 prevention half, backup-v0.2 restore-with-metadata-repair) in [TODO.md](TODO.md).
+
+### As built (backup-v0.1.0): reporting real changes vs. bookkeeping churn
+
+Copy-on-grow backs up *any* grown JSONL, no questions asked — but it shouldn't *announce* every re-backup. The bookkeeping bug below means a chat just sitting open in Desktop grows on every quit without gaining a real message, so naive reporting would flood `backup`/`status` with noise. The fix is in the reporting layer only (never the backup decision): `growth_is_substantial()` gates on size, then judges on record type. Growth >2 KB (`SUBSTANTIAL_GROWTH_BYTES`) is substantial without inspection; smaller growth gets its appended tail parsed and is "noise" only if *every* new record is a `BOOKKEEPING_RECORD_TYPES` type.
+
+Type, not size, is the real judge — because size can't tell them apart. Measured on this repo's transcript (2026-06-22): a real exchange is ~3.5 KB+, but every record carries ~500 B of repeated envelope metadata (`cwd`, `sessionId`, `uuid`, `version`, …), so a short real message can be ~540–880 B — under the gate, byte-comparable to a couple of bookkeeping records (82–344 B each). The 2 KB gate is just a cheap pre-filter to skip parsing on big exchanges; tuning it changes efficiency, not correctness. Misclassification never loses data (everything's backed up regardless) and `growth_is_only_bookkeeping()` returns False on any parse failure or unknown type, so we always err toward "loud," never toward quietly under-reporting real content.
+
+So the 2 KB number isn't protecting anything; it only decides whether to bother parsing. Tuning it changes efficiency, not correctness — don't agonize over it.
 
 **Restoration** is [`restore_claude_code.py`](restore_claude_code.py). It assumes the worst has already happened and pulls your chats back out of Time Machine. It's what catches you when prevention fails — which, given the track record, is a "when" not an "if."
 
@@ -124,6 +132,7 @@ These are the things the script is silently working around. Document them here s
   - The restore script preserves snapshot mtime correctly. Later churn is what makes restored files look "wrong" — don't blame the restore.
   - Don't build a downstream scrubber: it re-bloats on the next open/quit, and rewriting to strip dupes bumps mtime (the exact failure this repo warns about). The fix belongs upstream at the write path.
   - This is why retention must key off in-file timestamps, not mtime — Claude's own code mutates mtime independent of user activity. (See [@ojura on #59248](https://github.com/anthropics/claude-code/issues/59248#issuecomment-4535863101).)
+  - `last-prompt` records churn the same way (observed alongside the four above). `backup_claude_history.py` treats all five as bookkeeping when deciding whether grown-file growth is real content or churn — see §"As built (backup-v0.1.0)" above for how that classification works and why it can't cause data loss.
 
 ## Claude Desktop: session-recovery failure-mode taxonomy
 
