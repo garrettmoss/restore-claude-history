@@ -2,7 +2,7 @@
 
 Open work for this repo, ordered roughly by priority (top = next up). Add as needed.
 
-## `backup_claude_history.py` — forward backup + restore (PLANNED, decided 2026-06-16)
+## `backup_claude_history.py` — forward backup + restore (v0.1.0 SHIPPED 2026-06-22; restore half next)
 
 A continuous, user-run backup of `~/.claude/projects/` so recovery no longer depends on Time Machine (manual trigger, drive plug-in, Spotlight CPU thrash). The new everyday path; the TM scripts become the deep failsafe.
 
@@ -10,9 +10,14 @@ A continuous, user-run backup of `~/.claude/projects/` so recovery no longer dep
 
 ### Scope split (versioned lanes, prefix `backup-`)
 
-- **backup-v0.1.0 — prevention half (build first).** `install`/`uninstall` (merge a `SessionStart` hook into `~/.claude/settings.json`, don't clobber), the copy-on-grow backup engine writing the manifest, `status` (is the hook installed / when did it last run / anything stale), `list` (what's backed up, by project/date). Lock the mirror+manifest layout before installing the hook, so hook and tool agree from day one; install via the `install` verb once this lands. Engine seed = ojura's copy-on-grow hook (grows-only, mtime-immune, append-safe; runs on macOS unmodified) — archived in [personal-notes.md](personal-notes.md), write our own + credit him.
-- **backup-v0.2.0 — restore half (the hard part).** `restore` a file/session/project back into `~/.claude/projects/`, **with metadata repair** so the next cleanup sweep doesn't re-delete it as an orphan (the @BasedGPT risk on [#62272](https://github.com/anthropics/claude-code/issues/62272#issuecomment-4554894518) — this is why restore is a real feature, not a `cp`). By the time we build this, v0.1 will have produced real backups to test restore against — a far better position than the Desktop v0.3 guesswork. Overlaps the Desktop script's metadata concerns; watch for shared substrate.
+- **backup-v0.1.0 — prevention half. ✅ SHIPPED 2026-06-22.** `install`/`uninstall` (non-clobbering `SessionStart` hook merge), copy-on-grow engine + `manifest.json`, `status`, `list` — all built, tested in an isolated temp HOME, and verified live (hook fired on a real VS Code reopen, backed up 80 files / 42 MB). Layout is mirror + manifest under `~/.claude-code-backups/`. Two refinements landed beyond the original checklist: counts split conversations vs. subagent fragments, and grown-file reporting distinguishes real new content from Claude Desktop bookkeeping churn (record-type classifier — see [NOTES.md](NOTES.md) "As built (backup-v0.1.0)"). Engine credited to ojura ([#59248](https://github.com/anthropics/claude-code/issues/59248)), our own implementation.
+- **backup-v0.2.0 — restore half (the hard part). NEXT.** `restore` a file/session/project back into `~/.claude/projects/`, **with metadata repair** so the next cleanup sweep doesn't re-delete it as an orphan (the @BasedGPT risk on [#62272](https://github.com/anthropics/claude-code/issues/62272#issuecomment-4554894518) — this is why restore is a real feature, not a `cp`). By the time we build this, v0.1 will have produced real backups to test restore against — a far better position than the Desktop v0.3 guesswork. Overlaps the Desktop script's metadata concerns; watch for shared substrate.
 - **Maybe later:** `read` (peek at a backed-up transcript without restoring); a macOS LaunchAgent for non-session-start coverage (maintainer's `SessionStart` case is already covered; LaunchAgent is for users with background-sweep exposure).
+- **Watch: hook interpreter pinning.** `install` bakes `sys.executable` (the python that ran it) into the hook command — on this machine that resolved to the Xcode Command Line Tools python, not `/usr/bin/python3`. Both are 3.9.6 so it works, but the hook silently dies if that interpreter is ever removed. The `status` staleness check is the safety net. Open question for a later version: should `install` write a portable `/usr/bin/env python3` instead? Decide before promoting the tool widely.
+
+## Docs structure — split NOTES.md per-script (someday)
+
+NOTES.md now carries rationale for three scripts and is getting long. Not urgent, but at some point split per-script (e.g. `notes/code.md`, `notes/desktop.md`, `notes/backup.md`, or a clearly-sectioned single file) so each tool's design notes are findable. This is a structural change with cross-linking implications (README and CLAUDE.md both point into NOTES.md) — do it deliberately, not on a whim. Flagged 2026-06-22 while documenting the backup tool.
 
 ## Publicize the repo
 
