@@ -1,11 +1,12 @@
 # restore-claude-history
 
-Two small macOS tools for recovering Claude chats:
+Three small macOS tools for keeping and recovering Claude Code chats:
 
-- **[`restore_claude_code.py`](restore_claude_code.py)** — your transcripts were deleted from `~/.claude/projects/`. Pulls them back from Time Machine or local APFS snapshots.
+- **[`backup_claude_history.py`](backup_claude_history.py)** — *prevention.* Copies your transcripts out of `~/.claude/projects/` on every session start, so a cleanup sweep or bad update can't take them. No external drive needed. Set this up first.
+- **[`restore_claude_code.py`](restore_claude_code.py)** — *recovery from Time Machine.* Your transcripts were deleted and you have no backup of your own. Pulls them back from macOS Time Machine or local APFS snapshots.
 - **[`restore_claude_desktop.py`](restore_claude_desktop.py)** — Claude Desktop's UI shows **"Session not found on disk"** for sessions whose transcript is still there. Repairs the broken metadata link, no external drive required.
 
-Either tool is useful on its own. The Desktop tool's primary repair path needs only local files; the history tool needs a Time Machine drive *or* local snapshots.
+Each tool is useful on its own. `backup_claude_history.py` is the everyday safety net; the two restore tools are what you reach for when prevention wasn't in place — `restore_claude_code.py` needs a Time Machine drive *or* local snapshots, the Desktop tool needs only local files.
 
 ## Background
 
@@ -15,7 +16,9 @@ Either tool is useful on its own. The Desktop tool's primary repair path needs o
 
 ## Prevention first
 
-Before anything else, add this to `~/.claude/settings.json`:
+Prevention has two layers. Do both — they cover different failure modes.
+
+**1. Raise the cleanup window.** Add this to `~/.claude/settings.json`:
 
 ```json
 "cleanupPeriodDays": 36500
@@ -23,11 +26,64 @@ Before anything else, add this to `~/.claude/settings.json`:
 
 That's ~100 years. There's no documented upper bound; the schema just wants a positive integer. Do this on every machine you use Claude Code on.
 
-**Set this *and* keep backups — not one or the other.** The setting defangs the documented cleanup, but multiple user reports (e.g. [#41458](https://github.com/anthropics/claude-code/issues/41458)) describe chats vanishing *despite* the flag being set, most often around app updates. That's why this script exists alongside the prevention step, not instead of it.
+**2. Back up your transcripts continuously** with [`backup_claude_history.py`](backup_claude_history.py) (see [Backup](#backup) below). The setting defangs the *documented* cleanup, but multiple user reports (e.g. [#41458](https://github.com/anthropics/claude-code/issues/41458)) describe chats vanishing *despite* the flag being set, most often around app updates — and some session types ignore the setting entirely. The flag is a stopgap; a real backup is the safety net. Set the flag *and* keep backups, not one or the other.
 
-## Recovery
+## Backup
+
+This script: [`backup_claude_history.py`](backup_claude_history.py)
+
+Copies your Claude Code transcripts out of the deletion path into `~/.claude-code-backups/` every time a Claude Code session starts — so even if a cleanup sweep or an update deletes the originals, your latest copy survives outside `~/.claude/projects/`. It's the everyday prevention path; [`restore_claude_code.py`](restore_claude_code.py) stays the deeper Time Machine failsafe for chats older than your backups reach.
+
+How it works: a `SessionStart` hook runs one **copy-on-grow** pass on each session launch — a transcript is copied only when its backup is missing or the live file has *grown* (JSONLs are append-only, so the largest copy is the most complete). Original mtimes are preserved, so a backed-up file never looks "freshly touched" to the cleanup job. A `manifest.json` records what was captured and when, so `status` can warn you if backups silently stop running.
+
+### Requirements
+
+- macOS with Claude Code installed.
+- Python 3.9+ (the system `python3` from Apple's Command Line Tools is fine). No external dependencies.
+
+### Quickstart
+
+```bash
+git clone https://github.com/garrettmoss/restore-claude-history
+cd restore-claude-history
+
+# Install the SessionStart hook (merged into ~/.claude/settings.json,
+# leaving your other hooks and settings untouched):
+python3 backup_claude_history.py install
+
+# Capture what's already on disk right now (the hook only fires on
+# future session starts):
+python3 backup_claude_history.py backup
+
+# Check it's working — hook installed, when it last ran, anything stale:
+python3 backup_claude_history.py status
+```
+
+After install, every new Claude Code session backs up automatically. Run from a stable clone path — the installed hook points at this script's location, so don't delete or move the repo afterward.
+
+### Verbs
+
+| Verb | What it does |
+|---|---|
+| `backup` | Run one copy-on-grow pass. This is what the hook calls; run it manually anytime to capture the current state. |
+| `install` | Merge the `SessionStart` hook into `~/.claude/settings.json` (non-clobbering, idempotent). |
+| `uninstall` | Remove that hook again. Existing backups are left in place. |
+| `status` | Is the hook installed, when did backup last run, and are any live transcripts not yet (or only partially) backed up? |
+| `list` | List backed-up transcripts grouped by project, newest first. |
+
+Add `--verbose`/`-v` to `backup` to print a line per file copied.
+
+### A note on the counts
+
+`status` and `list` count **conversations** and **subagent fragments** separately (e.g. "54 conversations + 26 subagent fragments"). Subagent transcripts live under `<session-uuid>/subagents/` and are backed up too, but they're slices of a parent conversation, not standalone chats — so the split keeps a number like "80 files" from reading as "80 chats you forgot about."
+
+You may also see backups reported as *minor (likely Claude Desktop bookkeeping)*. Claude re-appends small bookkeeping records to a transcript every time you open or quit it in Desktop, which makes idle chats "grow" without gaining real messages. They're still backed up; the tool just reports them quietly so real new conversations stand out. See [NOTES.md](NOTES.md) for the details.
+
+## Recovery from Time Machine
 
 This script: [`restore_claude_code.py`](restore_claude_code.py)
+
+For when transcripts were deleted and you have **no [backup](#backup) of your own** — this is the deep failsafe that pulls them back from macOS Time Machine or local APFS snapshots. (If you *do* have backups from [`backup_claude_history.py`](backup_claude_history.py), restoring from those will be a `restore` verb on that script — coming in a later version — and won't need a Time Machine drive at all. This tool deliberately reads only Time Machine snapshots, never our own backups: it's the proven recovery path, kept separate and single-purpose.)
 
 ### Requirements
 
