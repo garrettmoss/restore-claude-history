@@ -515,7 +515,19 @@ def uninstall_hook(home: Path) -> str:
 # -------- status & list --------
 
 
+def _fmt_age_secs(secs: int) -> str:
+    """Render an age in seconds as a compact 's/m/h/d ago' string."""
+    if secs < 60:
+        return f"{secs}s ago"
+    if secs < 3600:
+        return f"{secs // 60}m ago"
+    if secs < 86400:
+        return f"{secs // 3600}h ago"
+    return f"{secs // 86400}d ago"
+
+
 def fmt_age(iso: str | None) -> str:
+    """Age of an ISO-8601 timestamp (e.g. manifest backed_up_at / last_run)."""
     if not iso:
         return "never"
     try:
@@ -524,15 +536,19 @@ def fmt_age(iso: str | None) -> str:
         return iso
     if then.tzinfo is None:
         then = then.replace(tzinfo=timezone.utc)
-    delta = datetime.now(timezone.utc) - then
-    secs = int(delta.total_seconds())
-    if secs < 60:
-        return f"{secs}s ago"
-    if secs < 3600:
-        return f"{secs // 60}m ago"
-    if secs < 86400:
-        return f"{secs // 3600}h ago"
-    return f"{secs // 86400}d ago"
+    return _fmt_age_secs(int((datetime.now(timezone.utc) - then).total_seconds()))
+
+
+def fmt_age_epoch(ts: float | None) -> str:
+    """
+    Age of a float epoch mtime (e.g. a transcript's src_mtime). `list` uses this
+    to show *last chat activity* — the time a user recognizes — rather than when
+    our backup happened to copy the file. See cmd_list for why that distinction
+    matters.
+    """
+    if ts is None:
+        return "never"
+    return _fmt_age_secs(int(time.time() - ts))
 
 
 def _human_bytes(n: int) -> str:
@@ -630,20 +646,30 @@ def cmd_list(home: Path) -> int:
             continue
         by_project.setdefault(proj, []).append((name, e))
 
-    # Order projects by most-recently-backed-up file within them.
-    def proj_recency(proj: str) -> str:
-        return max(e.backed_up_at for _, e in by_project[proj])
+    # Order by the chat's own last-activity time (src_mtime), NOT backed_up_at.
+    # backed_up_at is when *our script copied the file* — in a first full sweep
+    # that's identical for every file, so showing it makes every chat read "2d
+    # ago" and destroys the chronological ladder a user recognizes. src_mtime is
+    # the transcript's real mtime (preserved on copy), which is exactly what the
+    # VS Code / Desktop picker sorts by. backed_up_at stays in `status`, where
+    # "when did the backup last run" is the point.
+    def proj_recency(proj: str) -> float:
+        return max(e.src_mtime for _, e in by_project[proj])
 
     print(f"Backed-up transcripts ({backup_root(home)})")
     for proj in sorted(by_project, key=proj_recency, reverse=True):
-        files = sorted(by_project[proj], key=lambda t: t[1].backed_up_at, reverse=True)
+        files = sorted(by_project[proj], key=lambda t: t[1].src_mtime, reverse=True)
         total = sum(e.bytes for _, e in files)
         print()
         print(f"  {proj}  ({len(files)} file(s), {_human_bytes(total)})")
+        # Header row, aligned to the columns below: a UUID is 36 chars, then the
+        # right-justified size (>8) and last-activity age (>7), then the title.
+        print(f"    {'SESSION':36}  {'SIZE':>8}  {'LAST USED':>9}  TITLE")
         for name, e in files:
             label = read_session_label(backup_projects_root(home) / proj / name)
             title = f'  "{_truncate(label, 50)}"' if label else ""
-            print(f"    {name}  {_human_bytes(e.bytes):>8}  {fmt_age(e.backed_up_at)}{title}")
+            uuid = name[: -len(".jsonl")] if name.endswith(".jsonl") else name
+            print(f"    {uuid:36}  {_human_bytes(e.bytes):>8}  {fmt_age_epoch(e.src_mtime):>9}{title}")
     return 0
 
 
