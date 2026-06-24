@@ -11,12 +11,14 @@ failsafe for chats older than these backups reach (it pulls from Time Machine /
 APFS snapshots). Two scripts, two sources, one job each — by design there is no
 "check backups, fall back to TM" router here.
 
-Verbs (backup-v0.1.0, the prevention half):
+Verbs:
   backup     Run one copy-on-grow pass. This is what the SessionStart hook calls.
   install    Merge a SessionStart hook into ~/.claude/settings.json (non-clobbering).
   uninstall  Remove that hook again.
   status     Is the hook installed, when did backup last run, anything stale?
-  list       What's backed up, grouped by project.
+  list       What's backed up, grouped by project (shows each session's title).
+  restore    Copy backed-up transcript(s) back into ~/.claude/projects/. Dry-run
+             by default; --apply to write. (backup-v0.2.0, the restoration half.)
 
 On-disk layout (mirror + manifest):
   ~/.claude-code-backups/
@@ -61,6 +63,12 @@ SUBSTANTIAL_GROWTH_BYTES = 2048
 BOOKKEEPING_RECORD_TYPES = frozenset(
     {"custom-title", "ai-title", "mode", "permission-mode", "last-prompt"}
 )
+
+# How far into a transcript we read to recover its display title. Titles are
+# tiny records near the top; reading the whole (possibly multi-MB) file just to
+# label a list entry would be wasteful. If a title somehow sits past this many
+# bytes we fall back to the first prompt — a cosmetic miss, never a data one.
+LABEL_SCAN_BYTES = 256 * 1024
 
 import argparse
 import json
@@ -268,6 +276,55 @@ def growth_is_substantial(src: Path, prev: "ManifestEntry | None") -> bool:
     if growth > SUBSTANTIAL_GROWTH_BYTES:
         return True
     return not growth_is_only_bookkeeping(src, prev.bytes)
+
+
+def read_session_label(jsonl: Path) -> str | None:
+    """
+    Recover the human-readable title Claude shows in the VS Code / Desktop chat
+    picker, reading it straight out of a transcript.
+
+    Resolution mirrors the UI's own priority: a manual rename (`custom-title`)
+    wins; otherwise the auto-generated `ai-title`; otherwise the first user
+    prompt. Each title type can be re-appended (it's bookkeeping churn — see
+    BOOKKEEPING_RECORD_TYPES), so we keep the *last* occurrence of each, which is
+    the current value. Returns None only if the file is unreadable or empty —
+    callers fall back to the bare UUID.
+
+    We read at most LABEL_SCAN_BYTES: titles sit near the top, and this is only
+    ever a display label, never a correctness input.
+    """
+    custom = ai = first_prompt = None
+    try:
+        with jsonl.open("rb") as f:
+            blob = f.read(LABEL_SCAN_BYTES)
+    except OSError:
+        return None
+    for line in blob.decode("utf-8", errors="replace").splitlines():
+        if not line.strip():
+            continue
+        try:
+            rec = json.loads(line)
+        except json.JSONDecodeError:
+            # A truncated final line from the byte-capped read; ignore it.
+            continue
+        t = rec.get("type")
+        if t == "custom-title":
+            custom = rec.get("customTitle") or rec.get("title") or custom
+        elif t == "ai-title":
+            ai = rec.get("aiTitle") or ai
+        elif t == "user" and first_prompt is None:
+            content = rec.get("message", {}).get("content")
+            if isinstance(content, list):
+                content = " ".join(
+                    b.get("text", "") for b in content if isinstance(b, dict)
+                )
+            if isinstance(content, str) and content.strip():
+                first_prompt = content.strip()
+    label = custom or ai or first_prompt
+    if not label:
+        return None
+    label = " ".join(label.split())  # collapse newlines/runs of whitespace
+    return label
 
 
 def copy_preserving_mtime(src: Path, dst: Path) -> None:
@@ -584,8 +641,221 @@ def cmd_list(home: Path) -> int:
         print()
         print(f"  {proj}  ({len(files)} file(s), {_human_bytes(total)})")
         for name, e in files:
-            print(f"    {name}  {_human_bytes(e.bytes):>8}  {fmt_age(e.backed_up_at)}")
+            label = read_session_label(backup_projects_root(home) / proj / name)
+            title = f'  "{_truncate(label, 50)}"' if label else ""
+            print(f"    {name}  {_human_bytes(e.bytes):>8}  {fmt_age(e.backed_up_at)}{title}")
     return 0
+
+
+# -------- restore engine --------
+#
+# Restore reads *our own* backups (under ~/.claude-code-backups/) and copies
+# transcripts back into ~/.claude/projects/. It is deliberately scoped to Claude
+# Code CLI transcripts: the JSONL plus its real mtime is the complete state a CLI
+# session needs. Claude Desktop's separate metadata (sessions-index.json,
+# local_*.json) is a different beast and stays restore_claude_desktop.py's job —
+# see repair_session_index() for the one deferred seam.
+#
+# Two safety rules carry the whole design:
+#   1. Dry-run by default. Restore is destructive-adjacent; you opt in with
+#      --apply. The preview names each session by title so you see what you're
+#      about to touch.
+#   2. Never shrink a live file. This is copy-on-grow run backwards: if the live
+#      transcript is *larger* than the backup, you kept chatting after the last
+#      backup, and overwriting would silently drop that tail. We refuse such a
+#      target unless --force. (A live file the same size or smaller-but-present
+#      is treated as already-restored / nothing-to-do.)
+
+
+@dataclass
+class RestorePlan:
+    rel: str
+    src: Path          # backup copy
+    dst: Path          # live destination
+    backup_bytes: int
+    live_bytes: int | None   # None if no live file exists
+    action: str        # "restore" | "skip-present" | "refuse-live-grew"
+    label: str | None
+
+
+def _truncate(s: str, n: int) -> str:
+    return s if len(s) <= n else s[: n - 1] + "…"
+
+
+def resolve_targets(
+    manifest: dict[str, "ManifestEntry"],
+    *,
+    session: str | None,
+    project: str | None,
+    want_all: bool,
+) -> list[str]:
+    """
+    Turn a selector into the list of manifest rel-paths to restore.
+
+    --session accepts either the canonical "<project>/<uuid>" rel-path (a direct
+    manifest key) or a bare "<uuid>" we resolve across projects — refusing if the
+    same UUID exists in more than one project (effectively impossible, but we
+    don't guess). --project restores every transcript under one encoded project.
+    --all restores everything backed up. Exactly one selector is required;
+    argparse enforces that. die()s with a helpful message on no match.
+    """
+    if want_all:
+        return sorted(manifest)
+
+    if project is not None:
+        prefix = project.rstrip("/") + "/"
+        hits = sorted(r for r in manifest if r.startswith(prefix))
+        if not hits:
+            die(f"no backed-up transcripts under project {project!r}. "
+                f"Run `list` to see projects.")
+        return hits
+
+    # --session
+    sess = session.strip()
+    if sess.endswith(".jsonl"):
+        sess = sess[: -len(".jsonl")]
+    if "/" in sess:  # canonical <project>/<uuid>
+        rel = sess if sess.endswith(".jsonl") else sess + ".jsonl"
+        if rel not in manifest:
+            die(f"no backed-up transcript {rel!r}. Run `list` to see what's available.")
+        return [rel]
+    # bare UUID: find which project(s) hold it
+    suffix = "/" + sess + ".jsonl"
+    hits = sorted(r for r in manifest if r.endswith(suffix))
+    if not hits:
+        die(f"no backed-up transcript with session id {sess!r}. "
+            f"Run `list` to see backed-up sessions.")
+    if len(hits) > 1:
+        joined = "\n  ".join(hits)
+        die(f"session id {sess!r} exists in multiple projects — disambiguate with "
+            f"--session <project>/<uuid>:\n  {joined}")
+    return hits
+
+
+def plan_restore(home: Path, rels: list[str], manifest: dict[str, "ManifestEntry"]) -> list[RestorePlan]:
+    """Build a RestorePlan per target without touching anything. Pure inspection."""
+    src_root = backup_projects_root(home)
+    dst_root = projects_root(home)
+    plans: list[RestorePlan] = []
+    for rel in rels:
+        src = src_root / rel
+        dst = dst_root / rel
+        backup_bytes = manifest[rel].bytes if rel in manifest else (
+            src.stat().st_size if src.is_file() else 0
+        )
+        live_bytes = dst.stat().st_size if dst.is_file() else None
+        if live_bytes is None:
+            action = "restore"
+        elif live_bytes > backup_bytes:
+            action = "refuse-live-grew"
+        else:
+            # Live file present and no larger than the backup: already restored
+            # (or backup is the high-water mark). Nothing to do unless --force.
+            action = "skip-present"
+        plans.append(RestorePlan(
+            rel=rel, src=src, dst=dst,
+            backup_bytes=backup_bytes, live_bytes=live_bytes,
+            action=action, label=read_session_label(src),
+        ))
+    return plans
+
+
+def repair_session_index(home: Path, rel: str) -> None:
+    """
+    Deferred seam (backup-v0.2.0 ships without metadata repair).
+
+    Claude Desktop maintains a per-project sessions-index.json that lists which
+    JSONLs should exist; a restored transcript missing from it is the @BasedGPT
+    orphan risk (#62272) — re-deletable on the next cleanup sweep. But that file
+    is a *Desktop* artifact: it's absent for CLI-only projects, where the JSONL
+    with its preserved mtime is already the complete state. So there's nothing to
+    repair in the case this script is scoped to, and fabricating an index the CLI
+    never wrote would be inventing state.
+
+    Left as a named no-op so the call site exists if a real Desktop-restore case
+    ever lands here rather than in restore_claude_desktop.py. Do NOT wire it in
+    pre-emptively (CLAUDE.md: don't pre-emptively refactor).
+    """
+    return None
+
+
+def cmd_restore(
+    home: Path,
+    *,
+    session: str | None,
+    project: str | None,
+    want_all: bool,
+    apply: bool,
+    force: bool,
+) -> int:
+    """Restore backed-up transcript(s) into ~/.claude/projects/. Dry-run unless --apply."""
+    manifest = load_manifest(home)
+    if not manifest:
+        die("no backups to restore from. Run `backup` first, or `list` to check.")
+
+    rels = resolve_targets(manifest, session=session, project=project, want_all=want_all)
+    plans = plan_restore(home, rels, manifest)
+
+    print(f"{'Restoring' if apply else 'Would restore'} into {projects_root(home)}"
+          + ("" if apply else "  (dry run — pass --apply to write)"))
+    print()
+
+    to_write = 0
+    refused = 0
+    for p in plans:
+        title = f'"{_truncate(p.label, 50)}"' if p.label else "(untitled)"
+        live_desc = _human_bytes(p.live_bytes) if p.live_bytes is not None else "—"
+        if p.action == "restore":
+            verb = "restore "
+            to_write += 1
+        elif p.action == "refuse-live-grew" and force:
+            verb = "FORCE   "  # --force overrides the never-shrink rule
+            to_write += 1
+        elif p.action == "refuse-live-grew":
+            verb = "REFUSE  "
+            refused += 1
+        else:  # skip-present
+            verb = "skip    "
+        print(f"  {verb} {p.rel}")
+        print(f"           {title}")
+        print(f"           backup {_human_bytes(p.backup_bytes)}  /  live {live_desc}"
+              + ("  ⚠ live is larger — would lose unsaved tail" if p.action == "refuse-live-grew" else ""))
+
+    print()
+    if refused and not force:
+        print(f"  ⚠ {refused} refused: the live file has grown past the backup "
+              f"(you kept chatting since the last backup).")
+        print(f"    Overwriting would drop that newer content. Pass --force only if "
+              f"you're sure you want the older backed-up version.")
+
+    if not apply:
+        if to_write:
+            print(f"  {to_write} session(s) would be restored. Re-run with --apply to write.")
+        else:
+            print("  Nothing to restore.")
+        return 0
+
+    # --apply: do the writes.
+    written = failed = 0
+    for p in plans:
+        if p.action == "skip-present":
+            continue
+        if p.action == "refuse-live-grew" and not force:
+            continue
+        try:
+            copy_preserving_mtime(p.src, p.dst)
+        except OSError as e:
+            warn(f"failed to restore {p.rel}: {e}")
+            failed += 1
+            continue
+        repair_session_index(home, p.rel)  # deferred no-op; see its docstring
+        written += 1
+        print(f"  restored {p.rel}")
+    print()
+    print(f"  restored {written} session(s)"
+          + (f", {failed} failed" if failed else "")
+          + ". mtime preserved; Claude Code's cleanup won't see them as 'just now'.")
+    return 1 if failed else 0
 
 
 # -------- argv & main --------
@@ -618,7 +888,44 @@ def parse_args() -> argparse.Namespace:
                    help="Is the hook installed, when did backup last run, anything stale?")
     sub.add_parser("list", parents=[common],
                    help="List backed-up transcripts by project.")
-    return p.parse_args()
+
+    restore = sub.add_parser(
+        "restore", parents=[common],
+        help="Restore backed-up transcript(s) into ~/.claude/projects/ (dry-run by default).",
+        description="Restore Claude Code CLI transcripts from your own backups. "
+                    "Dry-run by default — pass --apply to write. Refuses to overwrite "
+                    "a live file that has grown past the backup unless --force.",
+    )
+    sel = restore.add_mutually_exclusive_group(required=True)
+    sel.add_argument("--session", metavar="<project>/<uuid> | <uuid>",
+                     help="One session: canonical <project>/<uuid>, or a bare UUID "
+                          "(refused if it exists in more than one project).")
+    sel.add_argument("--project", metavar="<encoded-project>",
+                     help="Every backed-up transcript under one encoded project dir.")
+    sel.add_argument("--all", action="store_true",
+                     help="Every transcript in the backup.")
+    restore.add_argument("--apply", action="store_true",
+                         help="Actually write. Without this, restore only previews.")
+    restore.add_argument("--force", action="store_true",
+                         help="Override the never-shrink guard and overwrite a live "
+                              "file that is larger than the backup. Use with care.")
+
+    # Encoded project names (and so <project>/<uuid> session keys) start with
+    # '-', which argparse mistakes for a flag. Rewrite "--project FOO" ->
+    # "--project=FOO" (same for --session) so users don't need the '=' syntax.
+    # Same gotcha and fix as restore_claude_code.py.
+    argv = sys.argv[1:]
+    rewritten: list[str] = []
+    i = 0
+    while i < len(argv):
+        if (argv[i] in ("--project", "--session")
+                and i + 1 < len(argv) and argv[i + 1].startswith("-")):
+            rewritten.append(f"{argv[i]}={argv[i + 1]}")
+            i += 2
+        else:
+            rewritten.append(argv[i])
+            i += 1
+    return p.parse_args(rewritten)
 
 
 def main() -> int:
@@ -669,6 +976,16 @@ def main() -> int:
 
     if args.verb == "list":
         return cmd_list(home)
+
+    if args.verb == "restore":
+        return cmd_restore(
+            home,
+            session=args.session,
+            project=args.project,
+            want_all=args.all,
+            apply=args.apply,
+            force=args.force,
+        )
 
     die(f"unknown verb: {args.verb}")  # unreachable; argparse enforces choices
 
