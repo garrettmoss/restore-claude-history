@@ -64,15 +64,21 @@ BOOKKEEPING_RECORD_TYPES = frozenset(
     {"custom-title", "ai-title", "mode", "permission-mode", "last-prompt"}
 )
 
-# How far into a transcript we read to recover its display title. Titles are
-# tiny records near the top; reading the whole (possibly multi-MB) file just to
-# label a list entry would be wasteful. If a title somehow sits past this many
-# bytes we fall back to the first prompt — a cosmetic miss, never a data one.
-LABEL_SCAN_BYTES = 256 * 1024
+# Title recovery reads only the first few records of a transcript — titles and
+# the first prompt live at the top. We cap by *record count*, not bytes: a
+# single record can be enormous (an `<ide_opened_file>` user message can inline a
+# multi-MB file), and a byte-cap would truncate mid-record and fail to parse the
+# rest. LABEL_SCAN_RECORDS bounds the work; LABEL_MAX_LINE_BYTES skips any single
+# line too big to be a title before we waste a json.loads on it (the first-prompt
+# fallback reads such a line only as a truncated prefix). A miss here is cosmetic
+# (we show the UUID), never a data problem.
+LABEL_SCAN_RECORDS = 50
+LABEL_MAX_LINE_BYTES = 64 * 1024
 
 import argparse
 import json
 import os
+import re
 import shutil
 import sys
 import time
@@ -287,44 +293,68 @@ def read_session_label(jsonl: Path) -> str | None:
     wins; otherwise the auto-generated `ai-title`; otherwise the first user
     prompt. Each title type can be re-appended (it's bookkeeping churn — see
     BOOKKEEPING_RECORD_TYPES), so we keep the *last* occurrence of each, which is
-    the current value. Returns None only if the file is unreadable or empty —
-    callers fall back to the bare UUID.
+    the current value. Returns None only if the file is unreadable or has no
+    usable label — callers fall back to the bare UUID.
 
-    We read at most LABEL_SCAN_BYTES: titles sit near the top, and this is only
-    ever a display label, never a correctness input.
+    Reads line by line (not a byte-blob) so an oversized record can't truncate
+    the read mid-line; bounded by LABEL_SCAN_RECORDS. See the constants above.
     """
     custom = ai = first_prompt = None
     try:
         with jsonl.open("rb") as f:
-            blob = f.read(LABEL_SCAN_BYTES)
+            seen = 0
+            for raw in f:
+                if seen >= LABEL_SCAN_RECORDS:
+                    break
+                if not raw.strip():
+                    continue
+                seen += 1
+                # A line too big to be a title: don't parse it as JSON. It may
+                # still be the first user message, so keep a truncated prefix for
+                # the fallback, but skip the (expensive, pointless) full parse.
+                if len(raw) > LABEL_MAX_LINE_BYTES:
+                    if first_prompt is None:
+                        first_prompt = _first_user_text(raw[:LABEL_MAX_LINE_BYTES])
+                    continue
+                try:
+                    rec = json.loads(raw)
+                except json.JSONDecodeError:
+                    continue
+                t = rec.get("type")
+                if t == "custom-title":
+                    custom = rec.get("customTitle") or rec.get("title") or custom
+                elif t == "ai-title":
+                    ai = rec.get("aiTitle") or ai
+                elif t == "user" and first_prompt is None:
+                    first_prompt = _first_user_text(raw)
     except OSError:
         return None
-    for line in blob.decode("utf-8", errors="replace").splitlines():
-        if not line.strip():
-            continue
-        try:
-            rec = json.loads(line)
-        except json.JSONDecodeError:
-            # A truncated final line from the byte-capped read; ignore it.
-            continue
-        t = rec.get("type")
-        if t == "custom-title":
-            custom = rec.get("customTitle") or rec.get("title") or custom
-        elif t == "ai-title":
-            ai = rec.get("aiTitle") or ai
-        elif t == "user" and first_prompt is None:
-            content = rec.get("message", {}).get("content")
-            if isinstance(content, list):
-                content = " ".join(
-                    b.get("text", "") for b in content if isinstance(b, dict)
-                )
-            if isinstance(content, str) and content.strip():
-                first_prompt = content.strip()
     label = custom or ai or first_prompt
     if not label:
         return None
-    label = " ".join(label.split())  # collapse newlines/runs of whitespace
-    return label
+    return " ".join(label.split())  # collapse newlines/runs of whitespace
+
+
+def _first_user_text(raw: bytes) -> str | None:
+    """
+    Pull the text out of a `user` record's raw JSON line. Tolerant: a truncated
+    line (from the oversized-record path) won't parse, so fall back to a crude
+    regex for the first text field. Returns None if nothing usable is found.
+    """
+    try:
+        rec = json.loads(raw)
+        content = rec.get("message", {}).get("content")
+        if isinstance(content, list):
+            content = " ".join(
+                b.get("text", "") for b in content if isinstance(b, dict)
+            )
+        if isinstance(content, str) and content.strip():
+            return content.strip()
+    except json.JSONDecodeError:
+        m = re.search(rb'"text"\s*:\s*"([^"\\]{1,200})', raw)
+        if m:
+            return m.group(1).decode("utf-8", errors="replace").strip()
+    return None
 
 
 def copy_preserving_mtime(src: Path, dst: Path) -> None:
