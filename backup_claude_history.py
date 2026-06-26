@@ -843,6 +843,7 @@ def cmd_restore(
     want_all: bool,
     apply: bool,
     force: bool,
+    verbose: bool = False,
 ) -> int:
     """Restore backed-up transcript(s) into ~/.claude/projects/. Dry-run unless --apply."""
     manifest = load_manifest(home)
@@ -854,28 +855,81 @@ def cmd_restore(
 
     print(f"{'Restoring' if apply else 'Would restore'} into {projects_root(home)}"
           + ("" if apply else "  (dry run — pass --apply to write)"))
-    print()
 
+    # Render: one row per top-level chat, grouped by project (long encoded path
+    # printed once, same shape as `list`). Subagent fragments don't get their own
+    # rows by default — a user restores a *chat*, not its sub-pieces; we just tag
+    # the parent with a count. --verbose expands them (and the orphan bucket,
+    # where the parent transcript itself wasn't backed up — e.g. data-of-being's
+    # Mode-B losses, where the subagents are the only surviving files).
+    # Verbosity changes *display only*; every selected file is still restored.
     to_write = 0
     refused = 0
-    for p in plans:
+    counts = {"restore": 0, "FORCE": 0, "REFUSE": 0, "skip": 0}
+
+    def classify(p: RestorePlan) -> str:
+        if p.action == "restore":
+            return "restore"
+        if p.action == "refuse-live-grew":
+            return "FORCE" if force else "REFUSE"
+        return "skip"
+
+    def row(p: RestorePlan, sess: str, indent: str = "    ", suffix: str = "") -> None:
         title = f'"{_truncate(p.label, 50)}"' if p.label else "(untitled)"
         live_desc = _human_bytes(p.live_bytes) if p.live_bytes is not None else "—"
-        if p.action == "restore":
-            verb = "restore "
+        sizes = f"{_human_bytes(p.backup_bytes)}→{live_desc}"
+        flag = "  ⚠ live larger" if p.action == "refuse-live-grew" else ""
+        # `suffix` (e.g. the subagent count) goes after the title so it never
+        # widens the fixed SESSION column and breaks alignment.
+        print(f"{indent}{classify(p):7}  {sess:36}  {sizes:>17}  {title}{flag}{suffix}")
+
+    by_project: dict[str, list[RestorePlan]] = {}
+    for p in plans:
+        by_project.setdefault(p.rel.split("/", 1)[0], []).append(p)
+
+    for p in plans:  # tally actions once, across everything (incl. subagents)
+        c = classify(p)
+        counts[c] += 1
+        if c in ("restore", "FORCE"):
             to_write += 1
-        elif p.action == "refuse-live-grew" and force:
-            verb = "FORCE   "  # --force overrides the never-shrink rule
-            to_write += 1
-        elif p.action == "refuse-live-grew":
-            verb = "REFUSE  "
+        elif c == "REFUSE":
             refused += 1
-        else:  # skip-present
-            verb = "skip    "
-        print(f"  {verb} {p.rel}")
-        print(f"           {title}")
-        print(f"           backup {_human_bytes(p.backup_bytes)}  /  live {live_desc}"
-              + ("  ⚠ live is larger — would lose unsaved tail" if p.action == "refuse-live-grew" else ""))
+
+    for proj in sorted(by_project):
+        # Split this project's plans into top-level chats and subagents, and map
+        # each subagent to its parent UUID (the segment before "/subagents/").
+        tops: dict[str, RestorePlan] = {}   # uuid -> plan
+        subs: dict[str, list[RestorePlan]] = {}  # parent-uuid -> [plans]
+        for p in by_project[proj]:
+            tail = p.rel[len(proj) + 1:]
+            if "/subagents/" in tail:
+                parent = tail.split("/subagents/", 1)[0]
+                subs.setdefault(parent, []).append(p)
+            else:
+                tops[tail[: -len(".jsonl")] if tail.endswith(".jsonl") else tail] = p
+
+        print()
+        print(f"  {proj}")
+        print(f"    {'ACTION':7}  {'SESSION':36}  {'BACKUP→LIVE':>17}  TITLE")
+        for uuid in sorted(tops):
+            child = subs.pop(uuid, [])
+            suffix = f"  (+{len(child)} subagent(s))" if child and not verbose else ""
+            row(tops[uuid], uuid, suffix=suffix)
+            if verbose:
+                for sp in sorted(child, key=lambda q: q.rel):
+                    name = sp.rel.split("/subagents/", 1)[1]
+                    name = name[: -len(".jsonl")] if name.endswith(".jsonl") else name
+                    row(sp, "  └ " + name, indent="      ")
+        # Subagents whose parent transcript isn't in the backup at all.
+        orphans = [sp for plist in subs.values() for sp in plist]
+        if orphans:
+            print(f"    (orphaned subagent(s) — parent transcript not backed up: "
+                  f"{len(orphans)})")
+            if verbose:
+                for sp in sorted(orphans, key=lambda q: q.rel):
+                    name = sp.rel[len(proj) + 1:]
+                    name = name[: -len(".jsonl")] if name.endswith(".jsonl") else name
+                    row(sp, "  └ " + name, indent="      ")
 
     print()
     if refused and not force:
@@ -1041,6 +1095,7 @@ def main() -> int:
             want_all=args.all,
             apply=args.apply,
             force=args.force,
+            verbose=args.verbose,
         )
 
     die(f"unknown verb: {args.verb}")  # unreachable; argparse enforces choices
