@@ -75,6 +75,16 @@ BOOKKEEPING_RECORD_TYPES = frozenset(
 LABEL_SCAN_RECORDS = 50
 LABEL_MAX_LINE_BYTES = 64 * 1024
 
+# Two distinct "no label" states, kept separate because they make different
+# claims. EMPTY is a confident claim — we scanned the whole file and it holds no
+# conversation, only file-history-snapshot / bookkeeping records (a session shell
+# spun up but never chatted in; not a lost chat). NOT_FOUND is honest
+# uncertainty — there *is* conversation, we just couldn't extract a title from
+# what we scanned (it may sit past the cap). "(untitled)" would over-claim the
+# latter. Both are still backed up; labeling is display-only.
+EMPTY_SESSION_LABEL = "(empty — no messages)"
+NO_TITLE_LABEL = "(title not found)"
+
 import argparse
 import json
 import os
@@ -300,11 +310,14 @@ def read_session_label(jsonl: Path) -> str | None:
     the read mid-line; bounded by LABEL_SCAN_RECORDS. See the constants above.
     """
     custom = ai = first_prompt = None
+    saw_conversation = False   # any user/assistant record at all?
+    reached_end = True         # did we scan the whole file (vs. hit the cap)?
     try:
         with jsonl.open("rb") as f:
             seen = 0
             for raw in f:
                 if seen >= LABEL_SCAN_RECORDS:
+                    reached_end = False
                     break
                 if not raw.strip():
                     continue
@@ -313,6 +326,7 @@ def read_session_label(jsonl: Path) -> str | None:
                 # still be the first user message, so keep a truncated prefix for
                 # the fallback, but skip the (expensive, pointless) full parse.
                 if len(raw) > LABEL_MAX_LINE_BYTES:
+                    saw_conversation = True  # only user/assistant records get big
                     if first_prompt is None:
                         first_prompt = _first_user_text(raw[:LABEL_MAX_LINE_BYTES])
                     continue
@@ -321,6 +335,8 @@ def read_session_label(jsonl: Path) -> str | None:
                 except json.JSONDecodeError:
                     continue
                 t = rec.get("type")
+                if t in ("user", "assistant"):
+                    saw_conversation = True
                 if t == "custom-title":
                     custom = rec.get("customTitle") or rec.get("title") or custom
                 elif t == "ai-title":
@@ -330,9 +346,15 @@ def read_session_label(jsonl: Path) -> str | None:
     except OSError:
         return None
     label = custom or ai or first_prompt
-    if not label:
-        return None
-    return " ".join(label.split())  # collapse newlines/runs of whitespace
+    if label:
+        return " ".join(label.split())  # collapse newlines/runs of whitespace
+    # No label. Distinguish a genuinely empty session (we scanned the whole file
+    # and it held no conversation — just snapshots/bookkeeping) from a real chat
+    # we simply couldn't title (e.g. content sits past the scan cap). Only the
+    # former gets the reassuring "empty" tag; the latter falls back to the UUID.
+    if reached_end and not saw_conversation:
+        return EMPTY_SESSION_LABEL
+    return None
 
 
 def _strip_ide_prefix(text: str) -> str:
@@ -713,8 +735,8 @@ def cmd_list(home: Path) -> int:
         # right-justified size (>8) and last-activity age (>7), then the title.
         print(f"    {'SESSION':36}  {'SIZE':>8}  {'LAST USED':>9}  TITLE")
         for name, e in files:
-            label = read_session_label(backup_projects_root(home) / proj / name)
-            title = f'  "{_truncate(label, 50)}"' if label else ""
+            label = read_session_label(backup_projects_root(home) / proj / name) or NO_TITLE_LABEL
+            title = f'  "{_truncate(label, 50)}"'
             uuid = name[: -len(".jsonl")] if name.endswith(".jsonl") else name
             print(f"    {uuid:36}  {_human_bytes(e.bytes):>8}  {fmt_age_epoch(e.src_mtime):>9}{title}")
     return 0
@@ -892,7 +914,7 @@ def cmd_restore(
         return "skip"
 
     def row(p: RestorePlan, sess: str, indent: str = "    ", suffix: str = "") -> None:
-        title = f'"{_truncate(p.label, 50)}"' if p.label else "(untitled)"
+        title = f'"{_truncate(p.label or NO_TITLE_LABEL, 50)}"'
         live_desc = _human_bytes(p.live_bytes) if p.live_bytes is not None else "—"
         sizes = f"{_human_bytes(p.backup_bytes)}→{live_desc}"
         flag = "  ⚠ live larger" if p.action == "refuse-live-grew" else ""
