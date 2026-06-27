@@ -335,12 +335,24 @@ def read_session_label(jsonl: Path) -> str | None:
     return " ".join(label.split())  # collapse newlines/runs of whitespace
 
 
+def _strip_ide_prefix(text: str) -> str:
+    """
+    Drop a leading `<ide_opened_file>…</ide_opened_file>` note the VS Code
+    extension prepends to a message — so the title is the user's actual prompt,
+    not "The user opened the file …". The closing tag makes the cut unambiguous;
+    we leave other injected prefixes (e.g. "Caveat: …") alone.
+    """
+    return re.sub(r"^\s*<ide_opened_file>.*?</ide_opened_file>\s*", "", text, count=1,
+                  flags=re.DOTALL)
+
+
 def _first_user_text(raw: bytes) -> str | None:
     """
     Pull the text out of a `user` record's raw JSON line. Tolerant: a truncated
     line (from the oversized-record path) won't parse, so fall back to a crude
     regex for the first text field. Returns None if nothing usable is found.
     """
+    text = None
     try:
         rec = json.loads(raw)
         content = rec.get("message", {}).get("content")
@@ -349,12 +361,17 @@ def _first_user_text(raw: bytes) -> str | None:
                 b.get("text", "") for b in content if isinstance(b, dict)
             )
         if isinstance(content, str) and content.strip():
-            return content.strip()
+            text = content.strip()
     except json.JSONDecodeError:
-        m = re.search(rb'"text"\s*:\s*"([^"\\]{1,200})', raw)
+        # Widen past a possible <ide_opened_file>…</ide_opened_file> note (~200
+        # chars) so its closing tag is captured and _strip_ide_prefix can cut it.
+        m = re.search(rb'"text"\s*:\s*"([^"\\]{1,500})', raw)
         if m:
-            return m.group(1).decode("utf-8", errors="replace").strip()
-    return None
+            text = m.group(1).decode("utf-8", errors="replace").strip()
+    if not text:
+        return None
+    text = _strip_ide_prefix(text).strip()
+    return text or None
 
 
 def copy_preserving_mtime(src: Path, dst: Path) -> None:
