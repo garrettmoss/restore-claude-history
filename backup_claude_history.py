@@ -44,7 +44,7 @@ only. See NOTES.md → "Strategy: prevention vs. restoration".
 
 from __future__ import annotations
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 # Cheap pre-filter for the substantial-vs-noise *reporting* split (never gates
 # the backup itself — every grown file is copied regardless). Growth above this

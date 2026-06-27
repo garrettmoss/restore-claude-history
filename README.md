@@ -2,7 +2,7 @@
 
 Three small macOS tools for keeping and recovering Claude Code chats:
 
-- **[`backup_claude_history.py`](backup_claude_history.py)** — *prevention.* Copies your transcripts out of `~/.claude/projects/` on every session start, so a cleanup sweep or bad update can't take them. No external drive needed. Set this up first.
+- **[`backup_claude_history.py`](backup_claude_history.py)** — *prevention, and recovery from your own backups.* Copies your transcripts out of `~/.claude/projects/` on every session start, so a cleanup sweep or bad update can't take them — then `restore`s them straight back if one goes missing. No external drive needed. Set this up first.
 - **[`restore_claude_code.py`](restore_claude_code.py)** — *recovery from Time Machine.* Your transcripts were deleted and you have no backup of your own. Pulls them back from macOS Time Machine or local APFS snapshots.
 - **[`restore_claude_desktop.py`](restore_claude_desktop.py)** — Claude Desktop's UI shows **"Session not found on disk"** for sessions whose transcript is still there. Repairs the broken metadata link, no external drive required.
 
@@ -69,9 +69,36 @@ After install, every new Claude Code session backs up automatically. Run from a 
 | `install` | Merge the `SessionStart` hook into `~/.claude/settings.json` (non-clobbering, idempotent). |
 | `uninstall` | Remove that hook again. Existing backups are left in place. |
 | `status` | Is the hook installed, when did backup last run, and are any live transcripts not yet (or only partially) backed up? |
-| `list` | List backed-up transcripts grouped by project, newest first. |
+| `list` | List backed-up transcripts grouped by project, newest first — with each session's title, size, and when it was last used. |
+| `restore` | Copy backed-up transcript(s) back into `~/.claude/projects/`. Dry-run by default; pass `--apply` to write. See [Restoring from your backups](#restoring-from-your-backups). |
 
-Add `--verbose`/`-v` to `backup` to print a line per file copied.
+Add `--verbose`/`-v` to `backup` to print a line per file copied (and to `restore` to expand each chat's subagent fragments).
+
+### Restoring from your backups
+
+When a transcript gets deleted, `restore` copies it back out of `~/.claude-code-backups/` into `~/.claude/projects/`, preserving the original mtime so the cleanup job doesn't immediately re-delete it. It reads only *your own* backups — [`restore_claude_code.py`](#recovery-from-time-machine) stays the separate Time Machine failsafe for chats older than your backups reach.
+
+```bash
+# Preview — what would come back, what's already intact, what's protected.
+# Dry-run is the default; nothing is written.
+python3 backup_claude_history.py restore --all
+
+# Restore one chat (bare UUID, or the full <project>/<uuid> if it's ambiguous):
+python3 backup_claude_history.py restore --session 141950a9-... --apply
+
+# Restore an entire project, or everything:
+python3 backup_claude_history.py restore --project=-Users-you-projects-foo --apply
+python3 backup_claude_history.py restore --all --apply
+```
+
+Pick what to restore with exactly one of `--session <uuid>` (or `<project>/<uuid>`), `--project <encoded>`, or `--all`. Run `list` first to find a chat by its title.
+
+Two safety rules make `restore` safe to point at `--all`:
+
+- **Dry-run by default.** You see the full plan — `restore` / `skip` / `REFUSE` per chat — and nothing is written until you add `--apply`.
+- **It never shrinks a live file.** If your on-disk transcript has *grown* past the backup (you kept chatting since the last backup ran), `restore` **refuses** it rather than overwrite newer content with an older copy. `--force` overrides this, deliberately, for the rare case you want the older version back.
+
+The preview groups by project and shows one line per chat (`ACTION  SESSION  BACKUP→LIVE  TITLE`); subagent fragments are folded into a `(+N subagent(s))` count unless you pass `--verbose`. Restoring `--all` or `--project` always brings the subagent fragments along regardless — the count is just a display choice.
 
 ### A note on the counts
 
@@ -83,7 +110,7 @@ You may also see backups reported as *minor (likely Claude Desktop bookkeeping)*
 
 This script: [`restore_claude_code.py`](restore_claude_code.py)
 
-For when transcripts were deleted and you have **no [backup](#backup) of your own** — this is the deep failsafe that pulls them back from macOS Time Machine or local APFS snapshots. (If you *do* have backups from [`backup_claude_history.py`](backup_claude_history.py), restoring from those will be a `restore` verb on that script — coming in a later version — and won't need a Time Machine drive at all. This tool deliberately reads only Time Machine snapshots, never our own backups: it's the proven recovery path, kept separate and single-purpose.)
+For when transcripts were deleted and you have **no [backup](#backup) of your own** — this is the deep failsafe that pulls them back from macOS Time Machine or local APFS snapshots. (If you *do* have backups from [`backup_claude_history.py`](backup_claude_history.py), restore from those with its [`restore` verb](#restoring-from-your-backups) instead — no Time Machine drive needed. This tool deliberately reads only Time Machine snapshots, never our own backups: it's the proven recovery path, kept separate and single-purpose.)
 
 ### Requirements
 
